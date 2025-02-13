@@ -12,6 +12,11 @@ module.exports = async (client) => {
         for (const localCommand of localCommands) {
             const { name, description, options } = localCommand;
 
+            // Validate command name
+            if (!/^[\w-]{1,32}$/.test(name)) {
+                console.log(`Invalid command name "${name}". Skipping registration.`);
+                continue;
+            }
             const existingCommand = await applicationCommands.cache.find(
                 (cmd) => cmd.name === name
             );
