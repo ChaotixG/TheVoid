@@ -1,5 +1,5 @@
 module.exports = {
-    name: 'ping',
+    name: 'Ticket',
     description: 'Pong!',
     // options: object[]
     callback: async (client, interaction) => {
