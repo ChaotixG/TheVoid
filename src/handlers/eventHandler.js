@@ -2,26 +2,26 @@ const path = require('path');
 const getAllFiles = require('../utils/getAllFiles');
 
 module.exports = (client) => {
-    // Get all folders in events directory
+    // Get all event folders
     const eventFolders = getAllFiles(path.join(__dirname, '..', 'events'), true);
 
     for (const eventFolder of eventFolders) {
-        // Get all event files from each folder
-        //console.log(getAllFiles(eventFolder,false, true, true, false))
-        const eventFiles = getAllFiles(eventFolder,false, true, true);
-        eventFiles.sort((a, b) => a > b);
+        // Get all event files (ensure only ONE file per event runs)
+        const eventFiles = getAllFiles(eventFolder, false, true, true);
+        eventFiles.sort((a, b) => a > b); // Sort files
+
         // Derive event name from folder name
         const eventName = path.basename(eventFolder);
-        //console.log(`Registering event: ${eventName}`);
+        const eventFile = eventFiles[0]; // Load only the first event file
 
-        // Set up listener for each event
-        client.on(eventName, async (arg) => {
-            for (const eventFile of eventFiles) {
-                // Import and execute the event file
-                const eventFunction = require(eventFile);
-                //console.log(`Executing: ${eventFile}`);
-                await eventFunction(client, arg);
-            }
+        if (!eventFile) continue; // Skip empty folders
+
+        console.log(`Registering event: ${eventName} from file: ${eventFile}`);
+
+        // Attach event listener (only for the first file found)
+        const eventFunction = require(eventFile);
+        client.on(eventName, async (...args) => {
+            await eventFunction(client, ...args);
         });
     }
 };

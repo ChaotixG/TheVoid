@@ -1,14 +1,14 @@
-const { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 
 module.exports = {
     name: "showmodal",
     description: "Shows a modal",
     
-    callback: async (client, interaction) => { // Fix: Correct function parameters
+    callback: async (client, interaction) => {
         if (!interaction.isChatInputCommand()) return; // Ensure it's a valid command interaction
 
         const modal = new ModalBuilder()
-            .setCustomId(`myModal-${interaction.user.id}`) // Fix: Custom ID must be unique
+            .setCustomId(`myModal-${interaction.user.id}`) // Custom ID must be unique
             .setTitle('My Modal');
 
         const favoriteColorInput = new TextInputBuilder()
@@ -24,8 +24,19 @@ module.exports = {
         const firstActionRow = new ActionRowBuilder().addComponents(favoriteColorInput);
         const secondActionRow = new ActionRowBuilder().addComponents(hobbiesInput);
 
-        modal.addComponents(firstActionRow, secondActionRow);
+        // Adding the dropdown menu for color selection
+        const colorSelectMenu = new StringSelectMenuBuilder()
+            .setCustomId('colorSelectMenu')
+            .setPlaceholder('Choose a color')
+            .addOptions([
+                { label: 'Red', value: 'red' },
+                { label: 'Blue', value: 'blue' },
+            ]);
 
-        await interaction.showModal(modal); // Ensure interaction is valid
+        const colorSelectRow = new ActionRowBuilder().addComponents(colorSelectMenu);
+
+        modal.addComponents(firstActionRow, secondActionRow, colorSelectRow);
+
+        await interaction.showModal(modal); // Show the modal to the user
     }
 };
