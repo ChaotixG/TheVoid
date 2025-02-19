@@ -1,3 +1,5 @@
+const { ThreadAutoArchiveDuration } = require('discord.js');
+
 async function createHelpThread(client, interaction, modalResults, channelId) {
     console.log("Received modalResults:", modalResults); // Debugging
 
@@ -30,6 +32,7 @@ async function createHelpThread(client, interaction, modalResults, channelId) {
             name: title,
             type: 12, // PRIVATE_THREAD type
             invitable: true, // Allow users to be added manually
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek, // 24 hours before archiving
         });
 
         // Send the description message in the newly created thread
