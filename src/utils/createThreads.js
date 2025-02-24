@@ -1,3 +1,4 @@
+const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const { ThreadAutoArchiveDuration } = require('discord.js');
 
 async function createHelpThread(client, interaction, modalResults, channelId) {
@@ -9,13 +10,8 @@ async function createHelpThread(client, interaction, modalResults, channelId) {
         return;
     }
 
-    // Extract title and description from the first two inputs
-    const title = modalResults[0]?.value || 'Untitled Thread'; // Default title if not provided
-    const description = modalResults[1]?.value || 'No description provided.'; // Default description if not provided
-
-    // Log extracted values for debugging purposes
-    console.log(`Title: ${title}`);
-    console.log(`Description: ${description}`);
+    const title = modalResults[0]?.value || 'Untitled Thread';
+    const description = modalResults[1]?.value || 'No description provided.';
 
     try {
         // Fetch the channel where the thread will be created
@@ -31,12 +27,44 @@ async function createHelpThread(client, interaction, modalResults, channelId) {
         const thread = await channel.threads.create({
             name: title,
             type: 12, // PRIVATE_THREAD type
-            invitable: true, // Allow users to be added manually
-            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek, // 24 hours before archiving
+            invitable: true,
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
         });
 
         // Send the description message in the newly created thread
-        await thread.send(`<@${interaction.user.id}>\n${description}`);
+        const threadEmbed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle(title)
+            .setDescription(description)
+            .setFooter({ text: `Created by ${interaction.user.tag}` });
+
+        // Create action row with buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('archive_ticket')
+                    .setLabel('Archive Ticket')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('delete_ticket')
+                    .setLabel('Delete Ticket')
+                    .setStyle(ButtonStyle.Danger)
+                    .setDisabled(interaction.guild.ownerId !== interaction.user.id) // Only enable the delete button for the server owner
+            );
+
+        // Send the embed and buttons to the thread
+        await thread.send({
+            content: `<@${interaction.user.id}>`,
+            embeds: [threadEmbed],
+            components: [actionRow],
+        });
+
+        // Notify the creator
+        await interaction.reply({
+            content: `Your ticket has been created successfully in the thread: ${thread.name}.`,
+            ephemeral: true
+        });
+
         console.log(`Thread created successfully: ${thread.name} (ID: ${thread.id})`);
 
     } catch (error) {
