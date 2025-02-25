@@ -10,6 +10,9 @@ const serverSchema = new Schema({
 	},disabledCommands: {
 		type: Array,
 		required: true,
+	},users: {
+		type: Array,
+		required: true,
 	}
 })
 

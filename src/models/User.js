@@ -6,13 +6,13 @@ const userSchema = new Schema({
 		type: String,
 		required: true,
 	},
-	guildId: {
-		type: String,
-		required: true,
-	},
-	Level: {
+	level: {
 		type: Number,
 		required: true,
+	},
+	xp: {
+		type: Number,
+		default: 0,
 	},
 	balance: {
 		type: Number,
