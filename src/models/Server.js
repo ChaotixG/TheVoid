@@ -1,4 +1,5 @@
 const { Schema, model } = require('mongoose');
+const userSchema = require('./User');
 
 const serverSchema = new Schema({
 	guildId: {
@@ -11,9 +12,11 @@ const serverSchema = new Schema({
 		type: Array,
 		required: true,
 	},users: {
-		type: Array,
+		type: [userSchema],
 		required: true,
 	}
 })
 
-module.exports = model('User', userSchema); 
+const Server = model('Server', serverSchema);
+
+module.exports = Server; 

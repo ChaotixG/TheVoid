@@ -49,7 +49,7 @@ module.exports = {
         await interaction.reply({
             content: 'Please select the type of ticket you wish to submit:',
             components: [actionRow],
-            ephemeral: true
+            flags: 64
         });
 
         try {
@@ -86,7 +86,7 @@ module.exports = {
             if (!interaction.replied) {
                 await interaction.followUp({
                     content: "There was an error processing your request.",
-                    ephemeral: true
+                    flags: 64
                 });
             }
         }

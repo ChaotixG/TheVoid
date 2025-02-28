@@ -1,5 +1,5 @@
 const { Schema, model } = require('mongoose');
-const inventoryModel = new Schema();
+//const inventoryModel = new Schema();
 
 const userSchema = new Schema({
 	userId: {
@@ -20,8 +20,8 @@ const userSchema = new Schema({
 	},
 	lastDaily: {
 		type: Date,
-		required: true,
+		default: null,
 	}
 })
 
-module.exports = model('User', userSchema); 
+module.exports = userSchema; 

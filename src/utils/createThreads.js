@@ -67,9 +67,59 @@ async function createHelpThread(client, interaction, modalResults, channelId) {
 
         console.log(`Thread created successfully: ${thread.name} (ID: ${thread.id})`);
 
+        client.on('interactionCreate', async (interaction) => {
+            if (!interaction.isButton()) return; // Ensure it's a button interaction
+        
+            // Check which button was clicked
+            if (interaction.customId === 'archive_ticket') {
+                // Archive ticket logic
+                await handleArchiveTicket(interaction);
+            } else if (interaction.customId === 'delete_ticket') {
+                // Delete ticket logic
+                await handleDeleteTicket(interaction);
+            }
+        });
+
     } catch (error) {
         console.error('Error creating thread:', error);
     }
 }
+
+async function handleArchiveTicket(interaction) {
+    const userId = interaction.user.id;
+    const guildId = interaction.guild.id;
+
+    // Fetch the ticket data from the server
+    const serverData = await ServerQuery(guildId);
+
+    if (!serverData) {
+        return interaction.reply('No ticket found for this server.');
+    }
+
+    const ticket = serverData.tickets.find(ticket => ticket.userId === userId);
+    if (!ticket) {
+        return interaction.reply('You have not created a ticket, or the ticket does not exist.');
+    }
+
+    // Archive logic (e.g., move ticket to a different collection, or set a field like `archived: true`)
+    ticket.archived = true;  // Assuming you want to set a flag to indicate the ticket is archived.
+
+    // Save the server data with the updated ticket
+    await ServerUpdate(guildId, serverData);
+
+    // Send a confirmation message
+    await interaction.reply('Your ticket has been archived.');
+}
+
+async function handleDeleteTicket(interaction) {
+    try {
+        await interaction.channel.delete();
+        console.log(`🗑️ Thread deleted by ${interaction.user.tag}: ${thread.name}`);
+    } catch (error) {
+        console.error('❌ Error deleting thread:', error);
+        return interaction.reply({ content: '❌ Failed to delete the thread.', flags: 64 });
+    }
+}
+
 
 module.exports = createHelpThread;

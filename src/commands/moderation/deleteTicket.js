@@ -5,7 +5,6 @@ module.exports = {
     description: 'Deletes the ticket',
     callback: async (client, interaction) => {
         const modRoleName = 'mod';
-        const adminpermissions = new PermissionsBitField(PermissionsBitField.Flags.Administrator);
         const thread = interaction.channel;
 
         // Check if the command is used in a thread
@@ -14,7 +13,9 @@ module.exports = {
         }
 
         // Check if the user has the moderator role or admin permissions
-        if (!interaction.member.roles.cache.some(role => role.name === modRoleName) || !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        if (interaction.member.id !== interaction.guild.ownerId && 
+            !interaction.member.roles.cache.some(role => role.name === modRoleName) && 
+            !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return interaction.reply({ content: '❌ You do not have permission to delete this thread.', flags: 64 });
         }
 
