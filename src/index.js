@@ -6,7 +6,8 @@ const client = new Client({ intents: [
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildMembers,] });
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,] });
 const mongoose = require('mongoose');
 const eventHandler = require('./handlers/eventHandler');
 

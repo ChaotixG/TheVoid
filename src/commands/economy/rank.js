@@ -28,7 +28,7 @@ module.exports = {
             const targetUserObj = await interaction.guild.members.fetch(targetUser);
             const server = await Server.findOne({ guildId: interaction.guild.id }); // Find the server
             const serverUser = server.users.find(serverUser => serverUser.userId === targetUser); // Find the user in the server
-            console.log(serverUser);
+            
             if(!serverUser) {interaction.editReply(
                 mentionedUser? `${targetUser.id} doesn't have a profile yet. Try again when they chat a little more.` 
                 : "You dont have a profile yet. Chat a little more and try again."
@@ -44,10 +44,12 @@ module.exports = {
                 return b.level - a.level;
                 }
             });
-            console.log(targetUser)
-            console.log(targetUserObj)
             let currRank = allLevels.findIndex((user) => user.userId === targetUser) + 1;
+            console.log(targetUserObj.user.globalName)
+            canvacord.Font.loadDefault('Arial'); // Load the default font
             const rank = new canvacord.RankCardBuilder()
+            .setDisplayName(targetUserObj.user.globalName) // Big name
+            .setUsername(targetUserObj.user.username) // small name, do not include it if you want to hide it
             .setAvatar(targetUserObj.user.displayAvatarURL({ size: 256 })) // Avatar from the user object
             .setCurrentXP(serverUser.xp)
             .setRequiredXP(calculateLevelXp(serverUser.level))
