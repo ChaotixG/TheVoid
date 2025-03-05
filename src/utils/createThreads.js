@@ -1,5 +1,6 @@
 const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const { ThreadAutoArchiveDuration } = require('discord.js');
+const api = require('./../services/customApi')
 
 async function createHelpThread(client, interaction, modalResults, channelId) {
     console.log("Received modalResults:", modalResults); // Debugging
@@ -60,10 +61,7 @@ async function createHelpThread(client, interaction, modalResults, channelId) {
         });
 
         // Notify the creator
-        await interaction.reply({
-            content: `Your ticket has been created successfully in the thread: ${thread.name}.`,
-            ephemeral: true
-        });
+        await api.delayedReply(interaction,`Your ticket has been created successfully in the thread: ${thread.name}.`, 4550, 64)
 
         console.log(`Thread created successfully: ${thread.name} (ID: ${thread.id})`);
 

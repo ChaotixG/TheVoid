@@ -19,7 +19,7 @@ module.exports = (directory, foldersOnly = false, filesOnly = false, flatten = t
             // Always recurse into directories, but only add files if filesOnly is not set
             const nestedFiles = module.exports(filePath, foldersOnly, filesOnly, flatten, nested);
             if (nested) {
-                fileNames.push(nestedFiles);
+                fileNames.push(...nestedFiles); // Flatten the nested result
             } else {
                 fileNames = fileNames.concat(nestedFiles);
             }
@@ -34,15 +34,6 @@ module.exports = (directory, foldersOnly = false, filesOnly = false, flatten = t
         }
     }
 
-    // If nested is true, return a nested array (grouped by folder)
-    if (nested) {
-        return fileNames;  // Just return the grouped structure
-    }
-
-    // If flatten is true, return a flat array
-    if (flatten) {
-        return fileNames.flat(); // Ensure flat structure even for nested results
-    }
-
-    return fileNames;  // Return as it is when neither flatten nor nested is true
+    // Return files as a flat array if flatten is true, otherwise return as it is
+    return flatten ? fileNames.flat() : fileNames;
 };

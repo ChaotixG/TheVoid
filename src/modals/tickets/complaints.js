@@ -1,8 +1,8 @@
 const { TextInputStyle } = require('discord.js');
 
 module.exports = {
-    customId: 'suggestionModal',
-    title: 'Submit a Suggestion',
+    customId: 'complaintModal',
+    title: 'Submit a Complaint',
     inputs: [
         {
             type: 'text',

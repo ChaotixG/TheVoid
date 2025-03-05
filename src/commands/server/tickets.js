@@ -1,5 +1,5 @@
 const { StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ActionRowBuilder } = require('discord.js');
-const handleModal = require('../../events/interactionCreate/handleModals');
+const handleModal = require('./../../events/interactionCreate/handleTickets');
 const createHelpThread = require('./../../utils/createThreads');
 
 module.exports = {
@@ -65,7 +65,6 @@ module.exports = {
 
             // **Handle modal interaction**
             const response = await handleModal(client, selection);
-            console.log('these are the responses' + JSON.stringify(response, null, 2));
 
             if (selection.values[0] === 'suggestion') {
                 channelId = '1339527658790195230';

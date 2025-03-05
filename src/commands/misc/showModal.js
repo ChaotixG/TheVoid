@@ -5,6 +5,7 @@ module.exports = {
     description: "Shows a modal",
     
     callback: async (client, interaction) => {
+
         if (!interaction.isChatInputCommand()) return; // Ensure it's a valid command interaction
 
         const modal = new ModalBuilder()
@@ -24,19 +25,24 @@ module.exports = {
         const firstActionRow = new ActionRowBuilder().addComponents(favoriteColorInput);
         const secondActionRow = new ActionRowBuilder().addComponents(hobbiesInput);
 
-        // Adding the dropdown menu for color selection
-        const colorSelectMenu = new StringSelectMenuBuilder()
-            .setCustomId('colorSelectMenu')
-            .setPlaceholder('Choose a color')
-            .addOptions([
-                { label: 'Red', value: 'red' },
-                { label: 'Blue', value: 'blue' },
-            ]);
-
-        const colorSelectRow = new ActionRowBuilder().addComponents(colorSelectMenu);
-
-        modal.addComponents(firstActionRow, secondActionRow, colorSelectRow);
+        modal.addComponents(firstActionRow, secondActionRow);
 
         await interaction.showModal(modal); // Show the modal to the user
+
+        // After the modal is submitted, show a select menu in the response message
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('colorSelectMenu')
+            .setPlaceholder('Choose a color')
+            .addOptions(
+                { label: 'Red', value: 'red' },
+                { label: 'Blue', value: 'blue' }
+            );
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.followUp({
+            content: 'Please select a color from the menu below:',
+            components: [row]
+        });
     }
 };
