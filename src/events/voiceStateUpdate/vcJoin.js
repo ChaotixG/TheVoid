@@ -181,6 +181,14 @@ const moveToNewVoiceChannel = async (newState, newVoiceChannel) => {
 
 const isUserStillInChat = async (newState) => { //checks if the user is still in the chat and returns value
     console.log('this is where id check if the user is still in chat')
+    const channel = newState.channel;
+    if (newState.channel && newState.channel.members.has(newState.userId)){
+        console.log('user is here')
+        return true
+    }else{
+        console.log('user left')
+        return false
+    }
 }
 
 const handleVoiceStateUpdate = async (client, oldState, newState) => {
@@ -202,7 +210,8 @@ const handleVoiceStateUpdate = async (client, oldState, newState) => {
         if (isHubChannel) {
             log(`${newState.member.user.tag} joined hub ${newChannel.name}`);
             const name = await namePrompting(newState.channel, userId);
-            isUserStillInChat(newState);
+            const userState = isUserStillInChat(newState);
+            if(!userState){return;}
             const newVC = await createVoiceChannel(newState.guild, newChannel.parentId, newState.member, name || undefined);
             if (newVC) await moveToNewVoiceChannel(newState, newVC);
         }
