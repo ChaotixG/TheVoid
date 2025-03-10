@@ -237,7 +237,7 @@ async function namePrompting(channel, userId) {
         // Wait for a button interaction (timeout in 10 seconds)
         const collected = await channel.awaitMessageComponent({
             filter,
-            time: 10000, // 10 seconds timeout
+            time: 18000, // 10 seconds timeout
         }).catch(e => {
             error('Error collecting button interaction:', e);
             api.deleteEntity(message);
@@ -330,3 +330,5 @@ const checkAndDeleteEmptyChannel = async (channel) => {
 };
 
 module.exports = handleVoiceStateUpdate;
+// When creating and moving member, check that they are still in the channel 
+// Currently if you leave a tracked VC when the timer is up you will still be moved to a new created server
