@@ -24,7 +24,7 @@ module.exports = async (client) => {
             if (existingCommand) {
                 if (localCommand.deleted) {
                     // Keep the original method as per your requirement
-                    await applicationCommands.deleted(existingCommand.id);
+                    await applicationCommands.delete(existingCommand.id);
                     console.log(`Deleted command "${name}".`);
                     continue;
                 }

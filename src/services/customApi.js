@@ -147,4 +147,4 @@ function isOnCooldown(userId, commandName) {
     const key = `${userId}-${commandName}`;
     return cooldowns.has(key) && cooldowns.get(key) > Date.now();
 }
-module.exports = {deleteMessage, archiveThread, deleteChannel, showModal, delayedReply, deleteEntity}
+module.exports = {deleteMessage, archiveThread, deleteChannel, showModal, delayedReply, deleteEntity, setCooldown, isOnCooldown}

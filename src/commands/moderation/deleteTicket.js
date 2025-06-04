@@ -1,15 +1,15 @@
 const { PermissionsBitField } = require('discord.js');
 
 module.exports = {
-    name: 'deltkt',
-    description: 'Deletes the ticket',
+    name: 'delete',
+    description: 'Deletes the current ticket',
     callback: async (client, interaction) => {
         const modRoleName = 'mod';
         const thread = interaction.channel;
 
         // Check if the command is used in a thread
         if (!thread.isThread()) {
-            return interaction.reply({ content: '❌ This command can only be used inside a thread.', flags: 64 });
+            return interaction.reply({ content: '❌ This command can only be used inside a ticket.', flags: 64 });
         }
 
         // Check if the user has the moderator role or admin permissions

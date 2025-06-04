@@ -73,8 +73,8 @@ module.exports = {
                 // Ensure the user who clicked the button is the same as the command invoker
                 if (buttonInteraction.user.id !== interaction.user.id) return;
 
-                // Always defer the interaction at the start
-                await buttonInteraction.deferReply({ flags: 64 });
+                // Acknowledge the button interaction
+                await buttonInteraction.deferUpdate();
 
                 if (buttonInteraction.customId === 'prev') {
                     index = (index - 1 + channels.length) % channels.length; // Wrap around
@@ -92,13 +92,27 @@ module.exports = {
 
                         index = Math.min(index, channels.length - 1); // Adjust index if necessary
 
-                        await buttonInteraction.editReply({ content: `✅ Removed **${removedChannel.name}** from tracked channels.` });
+                        await interaction.editReply({ content: `✅ Removed **${removedChannel.name}** from tracked channels.` });
                     } else {
-                        await buttonInteraction.editReply({ content: '⚠ No channels to remove.' });
+                        await interaction.editReply({ content: '⚠ No channels to remove.' });
                     }
                 } else if (buttonInteraction.customId === 'add') {
                     // Call the add() function when the 'Add' button is clicked
                     await add(buttonInteraction);
+                }
+
+                // Update the embed and components
+                const { embed, rows } = getEmbed();
+                await interaction.editReply({ embeds: [embed], components: rows });
+            });
+
+            collector.on('end', async (collected, reason) => {
+                console.log(`Select menu collector ended due to: ${reason}`);
+                if (reason === 'time') {
+                    await buttonInteraction.editReply({
+                        content: '⚠ You took too long to select a channel. Please try again.',
+                        components: []
+                    });
                 }
             });
         } else if (subcommand === 'other') {
