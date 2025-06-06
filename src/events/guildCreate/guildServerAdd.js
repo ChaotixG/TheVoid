@@ -14,9 +14,10 @@ module.exports = async (client, guild) => {
         // Create a new server entry
         const newServer = new Server({
             guildId: guild.id,
-            channelsId: [],         // Empty array initially
+            channels: [],         // Empty array initially
             disabledCommands: [],   // Empty array initially
-            users: []               // Empty array for users
+            users: [],              // Empty array for users
+            settings: {}            // Empty object for settings
         });
 
         await newServer.save();
