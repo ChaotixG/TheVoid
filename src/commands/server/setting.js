@@ -70,41 +70,39 @@ module.exports = {
             const collector = message.createMessageComponentCollector({ time: 60000 });
 
             collector.on('collect', async (buttonInteraction) => {
-                // Ensure the user who clicked the button is the same as the command invoker
                 if (buttonInteraction.user.id !== interaction.user.id) return;
-
-                // Acknowledge the button interaction
                 await buttonInteraction.deferUpdate();
 
+                let notifyMessage = null;
+
                 if (buttonInteraction.customId === 'prev') {
-                    index = (index - 1 + channels.length) % channels.length; // Wrap around
+                    index = (index - 1 + channels.length) % channels.length;
                 } else if (buttonInteraction.customId === 'next') {
                     index = (index + 1) % channels.length;
                 } else if (buttonInteraction.customId === 'remove') {
                     if (channels.length > 0) {
-                        const removedChannel = channels.splice(index, 1)[0];
-
-                        // Update the database
+                        const removed = channels.splice(index, 1)[0];
                         await Server.updateOne(
                             { guildId: interaction.guild.id },
                             { $set: { 'settings.channels': channels } }
                         );
-
-                        index = Math.min(index, channels.length - 1); // Adjust index if necessary
-
-                        await interaction.editReply({ content: `✅ Removed **${removedChannel.name}** from tracked channels.` });
+                        notifyMessage = `✅ Removed **${removed.name}** from tracked channels.`;
+                        index = Math.min(index, channels.length - 1);
                     } else {
-                        await interaction.editReply({ content: '⚠ No channels to remove.' });
+                        notifyMessage = '⚠ No channels to remove.';
                     }
                 } else if (buttonInteraction.customId === 'add') {
-                    // Call the add() function when the 'Add' button is clicked
-                    await add(buttonInteraction);
+                    return await add(buttonInteraction); // early return avoids extra editReply()
                 }
 
-                // Update the embed and components
                 const { embed, rows } = getEmbed();
-                await interaction.editReply({ embeds: [embed], components: rows });
+                await interaction.editReply({
+                    content: notifyMessage,
+                    embeds: [embed],
+                    components: rows
+                });
             });
+
 
             collector.on('end', async (collected, reason) => {
                 console.log(`Select menu collector ended due to: ${reason}`);
