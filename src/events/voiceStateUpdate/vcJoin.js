@@ -161,6 +161,7 @@ const createVoiceChannel = async (guild, parentId, member, name = `${member.user
             creatorId: member.id,
             timeout: setTimeout(() => checkAndDeleteEmptyChannel(newVoiceChannel), 10000),
         });
+
         info(`Created VC: ${newVoiceChannel.name} (ID: ${newVoiceChannel.id})`);
         return newVoiceChannel;
     } catch (e) {
@@ -179,17 +180,17 @@ const moveToNewVoiceChannel = async (newState, newVoiceChannel) => {
     }
 };
 
-const isUserStillInChat = async (newState) => { //checks if the user is still in the chat and returns value
-    console.log('this is where id check if the user is still in chat')
-    const channel = newState.channel;
-    if (newState.channel && newState.channel.members.has(newState.userId)){
-        console.log('user is here')
-        return true
-    }else{
-        console.log('user left')
-        return false
+const isUserStillInChat = async (channel, userId) => {
+    if (channel && userId && channel.members.has(userId)) {
+        console.log('user is here');
+        return true;
+    } else {
+        console.log('user left');
+        return false;
     }
-}
+};
+
+
 
 const handleVoiceStateUpdate = async (client, oldState, newState) => {
     if (!newState?.guild) return;
@@ -210,9 +211,10 @@ const handleVoiceStateUpdate = async (client, oldState, newState) => {
         if (isHubChannel) {
             log(`${newState.member.user.tag} joined hub ${newChannel.name}`);
             const name = await namePrompting(newState.channel, userId);
-            const userState = isUserStillInChat(newState);
+            const userState = await isUserStillInChat(newChannel, userId);
             if(!userState){return;}
             const newVC = await createVoiceChannel(newState.guild, newChannel.parentId, newState.member, name || undefined);
+            addServer(newVC);
             if (newVC) await moveToNewVoiceChannel(newState, newVC);
         }
         if (oldChannel) await checkAndDeleteEmptyChannel(oldChannel);
@@ -333,16 +335,70 @@ async function namePrompting(channel, userId) {
 
 
 const checkAndDeleteEmptyChannel = async (channel) => {
-    if (!channel || !activeVoiceChannels.has(channel.id)) return;
-    clearTimeout(activeVoiceChannels.get(channel.id)?.timeout);
-    setTimeout(async () => {
-        if (channel.members.size > 0) return;
-        await api.deleteEntity(channel);
-        activeVoiceChannels.delete(channel.id);
-        warn(`Deleted empty voice channel: ${channel.name} (ID: ${channel.id})`);
-    }, 5000);
+    try {
+        if (!channel || !activeVoiceChannels.has(channel.id)) return;
+        clearTimeout(activeVoiceChannels.get(channel.id)?.timeout);
+        remServer(channel.id, channel.guild.id);
+        setTimeout(async () => {
+            if (channel.members.size > 0) return;
+            await api.deleteEntity(channel);
+            activeVoiceChannels.delete(channel.id);
+            warn(`Deleted empty voice channel: ${channel.name} (ID: ${channel.id})`);
+        }, 5000);
+        
+    } catch (error) {
+        error(`Error checking and deleting empty channel ${channel.name} (ID: ${channel.id}):`, error);
+    }
 };
 
+async function addServer (newVC){
+    console.log(newVC.guild.id);
+    console.log(newVC.name);
+    console.log(newVC.id);
+    const server = await Server.findOne({ guildId: newVC.guild.id });
+    server.channels.push({
+        channelName: newVC.name,
+        channelId: newVC.id,
+    });
+    try {
+        await Server.updateOne(
+            { guildId: newVC.guild.id },
+            { $set: { 'channels': server.channels } }
+        );
+
+        // Send a confirmation message
+        console.log(`Channel ${newVC.name} added to server database.`);
+    } catch (error) {
+        console.error('Error updating database:', error);
+    }
+}
+
+async function remServer(channelId, guildId) {
+    try {
+        const server = await Server.findOne({ guildId });
+
+        if (!server) {
+            error(`Server not found for guildId ${guildId}`);
+            return;
+        }
+
+        const before = server.channels.length;
+        server.channels = server.channels.filter(ch => ch.channelId !== channelId);
+
+        if (server.channels.length === before) {
+            console.warn(`Channel ID ${channelId} not found in DB for guild ${guildId}`);
+            return;
+        }
+
+        await Server.updateOne(
+            { guildId },
+            { $set: { channels: server.channels } }
+        );
+
+        console.log(`Channel ${channelId} removed from server database.`);
+    } catch (error) {
+        console.error('Error removing channel from database:', error);
+    }
+}
+
 module.exports = handleVoiceStateUpdate;
-// When creating and moving member, check that they are still in the channel 
-// Currently if you leave a tracked VC when the timer is up you will still be moved to a new created server
