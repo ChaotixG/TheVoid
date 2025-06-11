@@ -3,7 +3,7 @@ const api = require("../../services/customApi");
 const { log, info, warn, error } = require("../../services/logger")
 const handleModals = require('../../events/interactionCreate/handleModals'); // Adjust path as needed
 const Server = require("../../models/Server");
-const activeVoiceChannels = new Collection();
+const activeVoiceChannels = require("../../cache/voiceChannels");
 const guildSettingsCache = new Map();
 const processingUsers = new Set();
 

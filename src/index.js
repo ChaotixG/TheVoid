@@ -1,5 +1,5 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
-
+const {rehydrateVoiceChannels} = require('./utils/rehydrateVoiceChannels');
 const { Client, GatewayIntentBits } = require('discord.js');
 const client = new Client({ intents: [
     GatewayIntentBits.Guilds,
@@ -21,6 +21,7 @@ const eventHandler = require('./handlers/eventHandler');
 
         client.on('ready', () => console.log('Bot is online!'));
         await client.login(process.env.TOKEN);
+        await rehydrateVoiceChannels(client); // 👈 Add this call
 
     } catch (error) {
         console.error(`Error: ${error}`);
