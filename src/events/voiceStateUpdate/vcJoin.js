@@ -338,10 +338,10 @@ const checkAndDeleteEmptyChannel = async (channel) => {
     try {
         if (!channel || !activeVoiceChannels.has(channel.id)) return;
         clearTimeout(activeVoiceChannels.get(channel.id)?.timeout);
-        remServer(channel.id, channel.guild.id);
         setTimeout(async () => {
             if (channel.members.size > 0) return;
             await api.deleteEntity(channel);
+            remServer(channel.id, channel.guild.id);
             activeVoiceChannels.delete(channel.id);
             warn(`Deleted empty voice channel: ${channel.name} (ID: ${channel.id})`);
         }, 5000);
