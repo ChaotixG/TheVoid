@@ -2,6 +2,8 @@ const { Client, Message, EmbedBuilder } = require('discord.js');
 const Server = require('../../models/Server');
 const calculateLevelXp = require('../../utils/calculateLevelXp');
 const cooldowns = new Set();
+const { error } = require("../../services/logger")
+
 
 function getRandomXp(min, max) {
     min = Math.ceil(min);
@@ -83,7 +85,7 @@ module.exports = async (client, message) => {
                 cooldowns.delete(message.author.id);
             }, 60000);
         }
-    } catch (error) {
-        console.log(`Error giving xp: ${error}`);
+    } catch (err) {
+        error(`Error giving xp: `, err);
     }
 };

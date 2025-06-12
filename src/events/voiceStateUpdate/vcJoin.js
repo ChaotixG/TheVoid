@@ -13,8 +13,8 @@ const fetchServerSettings = async (guildId) => {
         const server = await Server.findOne({ guildId }).lean();
         if (server) guildSettingsCache.set(guildId, server);
         return server;
-    } catch (e) {
-        error("Error fetching server settings: ", e);
+    } catch (err) {
+        error("Error fetching server settings: ", err);
         return null;
     }
 };
@@ -164,8 +164,8 @@ const createVoiceChannel = async (guild, parentId, member, name = `${member.user
 
         info(`Created VC: ${newVoiceChannel.name} (ID: ${newVoiceChannel.id})`);
         return newVoiceChannel;
-    } catch (e) {
-        error("Error creating VC: ", e);
+    } catch (err) {
+        error("Error creating VC: ", err);
         return null;
     }
 };
@@ -175,17 +175,17 @@ const moveToNewVoiceChannel = async (newState, newVoiceChannel) => {
     try {
         await newState.setChannel(newVoiceChannel);
         info(`Moved ${newState.member.user.tag} to ${newVoiceChannel.name}`);
-    } catch (e) {
-        error("error: Error moving user ", e);
+    } catch (err) {
+        error("Error moving user ", err);
     }
 };
 
 const isUserStillInChat = async (channel, userId) => {
     if (channel && userId && channel.members.has(userId)) {
-        console.log('user is here');
+        info('user is here');
         return true;
     } else {
-        console.log('user left');
+        info('user left');
         return false;
     }
 };
@@ -218,8 +218,8 @@ const handleVoiceStateUpdate = async (client, oldState, newState) => {
             if (newVC) await moveToNewVoiceChannel(newState, newVC);
         }
         if (oldChannel) await checkAndDeleteEmptyChannel(oldChannel);
-    } catch (e) {
-        error("Error handling voice state update", e);
+    } catch (err) {
+        error("Error handling voice state update: ", err);
     } finally {
         processingUsers.delete(userId);
     }
@@ -254,8 +254,8 @@ async function namePrompting(channel, userId) {
         const collected = await channel.awaitMessageComponent({
             filter,
             time: 18000, // 10 seconds timeout
-        }).catch(e => {
-            error('Error collecting button interaction:', e);
+        }).catch(err => {
+            error('Error collecting button interaction: ', err);
             api.deleteEntity(message);
             return null;
         });
@@ -309,8 +309,8 @@ async function namePrompting(channel, userId) {
                     api.deleteEntity(m, 5000);
                     return null;
                 }
-            } catch (e) {
-                error('Error handling modal submission:', e);
+            } catch (err) {
+                error('Error handling modal submission: ', err);
                 api.deleteEntity(message);
                 return null;  // Return null or handle errors as needed
             }
@@ -322,8 +322,8 @@ async function namePrompting(channel, userId) {
             api.deleteEntity(m, 5000);
             return null;
         }
-    } catch (e) {
-        error('Error in namePrompting function:', e);
+    } catch (err) {
+        error('Error in namePrompting function: ', err);
         const m = await channel.send({
             content: 'There was an error while executing the command.',
         });
@@ -346,15 +346,12 @@ const checkAndDeleteEmptyChannel = async (channel) => {
             warn(`Deleted empty voice channel: ${channel.name} (ID: ${channel.id})`);
         }, 5000);
         
-    } catch (error) {
-        error(`Error checking and deleting empty channel ${channel.name} (ID: ${channel.id}):`, error);
+    } catch (err) {
+        error(`Error checking and deleting empty channel ${channel.name} (ID: ${channel.id}): `, err);
     }
 };
 
 async function addServer (newVC){
-    console.log(newVC.guild.id);
-    console.log(newVC.name);
-    console.log(newVC.id);
     const server = await Server.findOne({ guildId: newVC.guild.id });
     server.channels.push({
         channelName: newVC.name,
@@ -367,9 +364,9 @@ async function addServer (newVC){
         );
 
         // Send a confirmation message
-        console.log(`Channel ${newVC.name} added to server database.`);
-    } catch (error) {
-        console.error('Error updating database:', error);
+        info(`Channel ${newVC.name} added to server database.`);
+    } catch (err) {
+        error('Error updating database: ', err);
     }
 }
 
@@ -378,7 +375,7 @@ async function remServer(channelId, guildId) {
         const server = await Server.findOne({ guildId });
 
         if (!server) {
-            error(`Server not found for guildId ${guildId}`);
+            error(`Server not found with guildId: `, guildId);
             return;
         }
 
@@ -386,7 +383,7 @@ async function remServer(channelId, guildId) {
         server.channels = server.channels.filter(ch => ch.channelId !== channelId);
 
         if (server.channels.length === before) {
-            console.warn(`Channel ID ${channelId} not found in DB for guild ${guildId}`);
+            warn(`Channel ID ${channelId} not found in DB for guild ${guildId}`);
             return;
         }
 
@@ -395,9 +392,9 @@ async function remServer(channelId, guildId) {
             { $set: { channels: server.channels } }
         );
 
-        console.log(`Channel ${channelId} removed from server database.`);
-    } catch (error) {
-        console.error('Error removing channel from database:', error);
+        info(`Channel ${channelId} removed from server database.`);
+    } catch (err) {
+        error('Error removing channel from database: ', err);
     }
 }
 

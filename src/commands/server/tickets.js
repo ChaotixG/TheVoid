@@ -3,6 +3,7 @@ const { StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ActionRowBuilder
 const buildModal = require('./../../utils/buildModal');
 const createThread = require('./../../utils/createThreads');
 const modalHandler = require('./../../handlers/modalHandler');
+const { error } = require("../../services/logger")
 
 module.exports = {
     name: 'ticket',
@@ -92,8 +93,8 @@ try {
         content: 'Your ticket has been submitted successfully!',
         ephemeral: true
     });
-} catch (error) {
-    console.error("Error processing ticket:", error);
+} catch (err) {
+    error("Error processing ticket: ", err);
 
     if (!interaction.replied) {
         await interaction.followUp({

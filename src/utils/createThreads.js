@@ -1,4 +1,5 @@
 // src/utils/createThreads.js
+const { log, info, error } = require("../services/logger")
 const {
   ButtonBuilder,
   ButtonStyle,
@@ -18,7 +19,6 @@ const { ThreadAutoArchiveDuration } = require('discord.js');
  * @param {string} channelId  The ID of either a ForumChannel or a TextChannel
  */
 async function createThread(client, interaction, modalResults, channelId) {
-  console.log("Received modalResults:", modalResults);
 
   const title       = modalResults.title       || 'Untitled Thread';
   const description = modalResults.description || 'No description provided.';
@@ -26,7 +26,7 @@ async function createThread(client, interaction, modalResults, channelId) {
   try {
     const channel = await client.channels.fetch(channelId);
     if (!channel) {
-      console.error("❌ Channel not found:", channelId);
+      error("❌ Channel not found: ", channelId);
       return;
     }
 
@@ -54,7 +54,6 @@ async function createThread(client, interaction, modalResults, channelId) {
     // CASE A: ForumChannel → create a “forum post” in one API call:
     // ──────────────────────────────────────────────────────────────────
     if (channel.type === ChannelType.GuildForum) {
-      console.log("─ Detected a ForumChannel; creating a forum post ─");
       const thread = await channel.threads.create({
         name: title,
         autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
@@ -67,7 +66,7 @@ async function createThread(client, interaction, modalResults, channelId) {
         },
         appliedTags: [] // ← optional: supply an array of Tag IDs if you want to pre‐tag the post
       });
-      console.log(`Forum post created: ${thread.id} (name="${thread.name}")`);
+      info(`Forum post created: ${thread.id} (name="${thread.name}")`);
       return;
     }
 
@@ -75,14 +74,13 @@ async function createThread(client, interaction, modalResults, channelId) {
     // CASE B: Regular TextChannel (or Private Channel) → create a private thread:
     // ──────────────────────────────────────────────────────────────────
     if (channel.type === ChannelType.GuildText || channel.isTextBased()) {
-      console.log("─ Detected a TextChannel; creating a private thread ─");
       const thread = await channel.threads.create({
         name: title,
         type: 12, // PRIVATE_THREAD
         invitable: true,
         autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek
       });
-      console.log(`Thread created: ${thread.id} (name="${thread.name}")`);
+      info(`Thread created: ${thread.id} (name="${thread.name}")`);
 
       try {
         await thread.send({
@@ -90,16 +88,16 @@ async function createThread(client, interaction, modalResults, channelId) {
           embeds: [threadEmbed],
           components: [actionRow]
         });
-        console.log("Message successfully sent into the thread.");
-      } catch (sendError) {
-        console.error("❌ thread.send() failed:", sendError);
+        log("Message successfully sent into the thread.");
+      } catch (err) {
+        error("❌ thread.send() failed: ", err);
       }
       return;
     }
 
-    console.error("❌ Unsupported channel type for ticket creation:", channel.type);
-  } catch (error) {
-    console.error("Error in createThread:", error);
+    error("❌ Unsupported channel type for ticket creation:", channel.type);
+  } catch (err) {
+    error("Error in createThread: ", err);
   }
 }
 

@@ -1,10 +1,11 @@
 const areCommandsDifferent = require('../../utils/areCommandsDifferent');
 const getApplicationCommands = require('../../utils/getApplicationCommands');
 const getLocalCommands = require('../../utils/getLocalCommands');
+const { log, info, warn, error } = require("../../services/logger")
 
 module.exports = async (client) => {
     try {
-        console.log("Registering commands...");
+        log("Registering commands...");
 
         const localCommands = getLocalCommands();
         const applicationCommands = await getApplicationCommands(client);
@@ -14,7 +15,7 @@ module.exports = async (client) => {
 
             // Validate command name
             if (!/^[\w-]{1,32}$/.test(name)) {
-                console.log(`Invalid command name "${name}". Skipping registration.`);
+                warn(`Invalid command name "${name}". Skipping registration.`);
                 continue;
             }
             const existingCommand = await applicationCommands.cache.find(
@@ -25,7 +26,7 @@ module.exports = async (client) => {
                 if (localCommand.deleted) {
                     // Keep the original method as per your requirement
                     await applicationCommands.delete(existingCommand.id);
-                    console.log(`Deleted command "${name}".`);
+                    warn(`Deleted command "${name}".`);
                     continue;
                 }
 
@@ -35,12 +36,12 @@ module.exports = async (client) => {
                         description, // Fixed typo here
                         options,
                     });
-                    console.log(`Edited command "${name}".`);
+                    warn(`Edited command "${name}".`);
                 }
             } else {
                 if (localCommand.deleted) {
                     // Skip registration if the command is marked as deleted
-                    console.log(`Skipping registration of deleted command "${name}".`);
+                    warn(`Skipping registration of deleted command "${name}".`);
                     continue;
                 }
 
@@ -50,11 +51,11 @@ module.exports = async (client) => {
                     description,
                     options,
                 });
-                console.log(`Registered command "${name}".`);
+                info(`Registered command "${name}".`);
             }
         }
 
-    } catch (error) {
-        console.log(`There was an error in registerCommands: ${error}`);
+    } catch (err) {
+        error(`There was an error in registerCommands: `, err);
     }
 };

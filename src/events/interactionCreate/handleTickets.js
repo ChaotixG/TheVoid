@@ -3,6 +3,7 @@ const path = require('path');
 const buildModal = require('../../utils/buildModal');
 const getAllFiles = require('../../utils/getAllFiles');
 const api = require('./../../services/customApi');
+const { log, warn, error } = require("../../services/logger")
 
 // Track processed interactions
 const processedInteractions = new Set();
@@ -12,20 +13,19 @@ module.exports = async (client, interaction) => {
 
     // Prevent duplicate processing
     if (processedInteractions.has(interaction.id)) {
-        console.log(`Interaction ${interaction.id} already processed.`);
+        warn(`Interaction ${interaction.id} already processed.`);
         return;
     }
     processedInteractions.add(interaction.id);
 
-    console.log('handleTickets.js called');
     const selectedType = interaction.values[0];
-    console.log(`User selected: ${selectedType}`);
+    log(`User selected: ${selectedType}`);
 
     const modals = getAllFiles('./src/modals/tickets', false, true, false, false);
     const modalFile = modals.find(file => file.toLowerCase().includes(selectedType));
 
     if (!modalFile) {
-        console.error(`No matching modal file found for type: ${selectedType}`);
+        error(`No matching modal file found for type: ${selectedType}`);
         if (!interaction.replied && !interaction.deferred) {
             return interaction.reply({
                 content: `No matching modal file found for type: **${selectedType}**`,
@@ -35,14 +35,14 @@ module.exports = async (client, interaction) => {
         return;
     }
 
-    console.log(`Loading modal file: ${modalFile}`);
+    log(`Loading modal file: ${modalFile}`);
 
     try {
         const modalPath = path.join(__dirname, `./../../../${modalFile}`);
         const modalModule = require(modalPath);
 
         if (!modalModule.customId || !modalModule.title || !modalModule.inputs) {
-            console.error(`Modal file ${modalFile} is missing required properties.`);
+            error(`Modal file ${modalFile} is missing required properties.`);
             if (!interaction.replied && !interaction.deferred) {
                 return interaction.reply({
                     content: `Modal file ${modalFile} is missing required properties.`,
@@ -53,7 +53,6 @@ module.exports = async (client, interaction) => {
         }
 
         const modal = buildModal(modalModule.customId, modalModule.title, modalModule.inputs);
-        console.log("Attempting to show modal.");
         //await interaction.showModal(modal); // Acknowledges the interaction
 
         // Await modal submission
@@ -78,12 +77,10 @@ module.exports = async (client, interaction) => {
 
             // Clean up processed interaction
             processedInteractions.delete(interaction.id);
-
-            console.log("Modal submission received:", response);
             
             return response;
-        } catch (error) {
-            console.error("Error handling modal submission:", error);
+        } catch (err) {
+            error("Error handling modal submission: ", err);
             if (!interaction.replied) {
                 await interaction.followUp({
                     content: "There was an issue processing your submission or it timed out.",
@@ -92,11 +89,11 @@ module.exports = async (client, interaction) => {
             }
         }
 
-    } catch (error) {
-        console.error(`Error loading modal file: ${error}`);
+    } catch (err) {
+        error(`Error loading modal file: `, err);
         if (!interaction.replied && !interaction.deferred) {
             return interaction.reply({
-                content: `Error loading modal file: ${error}`,
+                content: `Error loading modal file: ${err}`,
                 ephemeral: true
             });
         }

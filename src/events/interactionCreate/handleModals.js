@@ -1,4 +1,5 @@
 const { ModalSubmitInteraction } = require('discord.js');
+const { error } = require("../../services/logger")
 
 module.exports = async (interaction) => {
     if (!(interaction instanceof ModalSubmitInteraction)) return;  // Early return for non-modal interactions
@@ -18,8 +19,8 @@ module.exports = async (interaction) => {
 
         // Return the form data
         return formData;
-    } catch (error) {
-        console.error('Error handling modal submission:', error);
+    } catch (err) {
+        error('Error handling modal submission: ', err);
 
         // Handle error gracefully by replying to the interaction
         if (interaction && typeof interaction.reply === 'function') {

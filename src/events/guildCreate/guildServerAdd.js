@@ -1,13 +1,14 @@
 const Server = require('../../models/Server');
+const { log, info, warn, error } = require("../../services/logger")
 
 module.exports = async (client, guild) => {
     try {
         // Check if the server already exists
-        console.log(`Joined a new server: ${guild.id}`);
+        info(`Joined a new server: ${guild.id}`);
         const existingServer = await Server.findOne({ guildId: guild.id });
 
         if (existingServer) {
-            console.log(`Server ${guild.id} already exists in the database.`);
+            warn(`Server ${guild.id} already exists in the database.`);
             return;
         }
 
@@ -21,8 +22,8 @@ module.exports = async (client, guild) => {
         });
 
         await newServer.save();
-        console.log(`New server ${guild.id} added to the database.`);
-    } catch (error) {
-        console.error(`Error adding new server: ${error}`);
+        log(`New server ${guild.id} added to the database.`);
+    } catch (err) {
+        error(`Error adding new server: `, err);
     }
 };

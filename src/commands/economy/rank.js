@@ -2,6 +2,7 @@ const { Client, Interaction, ApplicationCommandOptionType, AttachmentBuilder } =
 const canvacord = require('canvacord');
 const calculateLevelXp = require('../../utils/calculateLevelXp');
 const Server = require('../../models/Server');
+const { log, error } = require("../../services/logger")
 
 module.exports = {  
     /**
@@ -45,7 +46,7 @@ module.exports = {
                 }
             });
             let currRank = allLevels.findIndex((user) => user.userId === targetUser) + 1;
-            console.log(targetUserObj.user.globalName)
+            log(targetUserObj.user.globalName)
             canvacord.Font.loadDefault('Arial'); // Load the default font
             const rank = new canvacord.RankCardBuilder()
             .setDisplayName(targetUserObj.user.globalName) // Big name
@@ -68,8 +69,8 @@ module.exports = {
             interaction.editReply({files: [attachement]});
 
 
-        }catch (error) {
-            console.error(`Error finding user in server: ${error}`);
+        }catch (err) {
+            error(`Error finding user in server: `, error);
         }
     }
 }

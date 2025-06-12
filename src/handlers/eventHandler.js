@@ -1,12 +1,13 @@
 const path = require('path');
 const getAllFiles = require('../utils/getAllFiles');
+const { info, warn, error } = require("../services/logger")
 
 module.exports = (client) => {
     // Get all event folders
     const eventFolders = getAllFiles(path.join(__dirname, '..', 'events'), true);
 
     if (!eventFolders.length) {
-        console.error("No event folders found.");
+        warn("No event folders found.");
         return;
     }
 
@@ -30,14 +31,14 @@ module.exports = (client) => {
             const eventFiles = getAllFiles(eventFolder, false, true, true);
 
             eventFiles.forEach(eventFile => {
-                console.log(`Registering event: ${eventName} from file: ${eventFile}`);
+                info(`Registering event: ${eventName} from file: ${eventFile}`);
                 try {
                     const eventFunction = require(eventFile);
                     client.on(eventName, async (...args) => {
                         await eventFunction(client, ...args); // Execute the event
                     });
                 } catch (err) {
-                    console.error(`Error registering event ${eventName} from file ${eventFile}:`, err);
+                    error(`Error registering event ${eventName} from file ${eventFile}: `, err);
                 }
             });
         }
@@ -60,7 +61,7 @@ module.exports = (client) => {
                 }
             }
         } catch (err) {
-            console.error('Error handling interaction:', err);
+            error('Error handling interaction: ', err);
         }
     });
 };

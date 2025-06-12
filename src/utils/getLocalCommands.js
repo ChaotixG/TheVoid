@@ -7,7 +7,6 @@ module.exports = (exceptions = []) => {
     const localCommandsFolders = getAllFiles(
         path.join(__dirname, '..', 'commands'), true, false
     );
-        //console.log(localCommandsFolders)
     const localCommandFiles = getAllFiles(
         path.join(__dirname, '..', 'commands'), false, true,
     );
@@ -16,9 +15,7 @@ module.exports = (exceptions = []) => {
         if( exceptions.includes(commandObject.name)){
             continue;
         }
-        //console.log(commandFile)
         localCommands.push(commandObject)
     }
-    //console.log(localCommandFiles)
     return localCommands;
 };

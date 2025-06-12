@@ -1,4 +1,5 @@
 const { Message, ModalSubmitInteraction, BaseChannel } = require('discord.js');
+const { error } = require("./logger")
 
 async function deleteMessage(interaction, timeout = 0) {
     if (!interaction) return;
@@ -13,8 +14,8 @@ async function deleteMessage(interaction, timeout = 0) {
         setTimeout(async () => {
             try {
                 await interaction.delete();
-            } catch (error) {
-                console.error(`Failed to delete message: ${error.message}`);
+            } catch (err) {
+                error(`Failed to delete message: `, err);
             }
         }, deleteDelay);
     }
@@ -25,8 +26,8 @@ async function deleteMessage(interaction, timeout = 0) {
         setTimeout(async () => {
             try {
                 await interaction.deleteReply();
-            } catch (error) {
-                console.error(`Failed to delete interaction: ${error.message}`);
+            } catch (err) {
+                error(`Failed to delete interaction: `, err);
             }
         }, deleteDelay);
     }
@@ -52,8 +53,8 @@ async function deleteEntity(entity, timeout = 0) {
             } else if (isChannel && entity.deletable) {
                 await entity.delete();
             }
-        } catch (error) {
-            console.error(`Failed to delete entity: ${error.message}`);
+        } catch (err) {
+            error(`Failed to delete entity: `, err);
         }
     }, deleteDelay);
 }
@@ -95,8 +96,8 @@ async function archiveThread(thread, autoUnarchive = false, hours = 24) {
         if (autoUnarchive) {
             setTimeout(() => thread.setArchived(false), hours * 60 * 60 * 1000); // Unarchive after 24h
         }
-    } catch (error) {
-        console.error(`Failed to archive thread: ${error.message}`);
+    } catch (err) {
+        error(`Failed to archive thread: `, err);
     }
 }
 
@@ -109,8 +110,8 @@ async function deleteChannel(channel, timeout = 5000) {
     if (typeof channel === 'string') {
         try {
             channel = await channel.guild.channels.fetch(channel);  // Fetch the channel by ID
-        } catch (error) {
-            console.error(`Failed to fetch channel with ID ${channel}: ${error.message}`);
+        } catch (err) {
+            error(`Failed to fetch channel with ID ${channel}: `, err);
             return;
         }
     }
@@ -118,8 +119,8 @@ async function deleteChannel(channel, timeout = 5000) {
     setTimeout(async () => {
         try {
             await channel.delete();
-        } catch (error) {
-            console.error(`Failed to delete channel: ${error.message}`);
+        } catch (err) {
+            error(`Failed to delete channel: `, err);
         }
     }, timeout);
 }
@@ -129,8 +130,8 @@ async function deleteChannel(channel, timeout = 5000) {
 async function showModal(interaction, modal) {
     try {
         await interaction.showModal(modal);
-    } catch (error) {
-        console.error(`Error showing modal: ${error.message}`);
+    } catch (err) {
+        error(`Error showing modal: `, err);
     }
 }
 

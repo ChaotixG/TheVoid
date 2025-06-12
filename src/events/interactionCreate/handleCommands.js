@@ -1,9 +1,9 @@
 const { devs, testServer } = require('../../../config.json');
 const getLocalCommands = require('../../utils/getLocalCommands');
+const { error } = require("../../services/logger")
 
 module.exports = async (client, interaction) => {
     if(!interaction.isChatInputCommand()) return;
-    console.log('handleCommands.js called');
 
     const localCommands = getLocalCommands();
     try {
@@ -47,7 +47,7 @@ module.exports = async (client, interaction) => {
         }
 
         await commandObject.callback(client, interaction);
-    } catch (error) {
-        console.log(`There was an error running this command: ${error}`)
+    } catch (err) {
+        error(`There was an error running this command: `, err)
     }
 };

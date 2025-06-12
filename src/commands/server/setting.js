@@ -1,5 +1,6 @@
 const { EmbedBuilder, ChannelType, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const Server = require('../../models/Server');
+const { log, info, warn, error } = require("../../services/logger")
 
 module.exports = {
     name: 'settings',
@@ -105,14 +106,19 @@ module.exports = {
 
 
             collector.on('end', async (collected, reason) => {
-                console.log(`Select menu collector ended due to: ${reason}`);
+                error(`Select menu collector ended due to: ${reason}`);
                 if (reason === 'time') {
-                    await buttonInteraction.editReply({
-                        content: '⚠ You took too long to select a channel. Please try again.',
-                        components: []
-                    });
+                    try {
+                        await interaction.editReply({
+                            content: '⚠ You took too long to select a channel. Please try again.',
+                            components: []
+                        });
+                    } catch (err) {
+                        error('Failed to edit reply after timeout: ', err);
+                    }
                 }
             });
+
         } else if (subcommand === 'other') {
             await interaction.editReply({ content: 'Other settings logic here!' });
         }
@@ -127,7 +133,7 @@ async function add(buttonInteraction) {
         channelId: channel.id
     }));
 
-    console.log(voiceChannelArray); // This will log an array of objects with name and id
+    info(voiceChannelArray); // This will log an array of objects with name and id
 
     if (voiceChannelArray.length === 0) {
         return buttonInteraction.editReply({ content: '⚠ No voice channels found in the server.' });
@@ -170,7 +176,7 @@ async function add(buttonInteraction) {
         interaction.customId === 'select_channel' &&
         interaction.user.id === buttonInteraction.user.id;
 
-    console.log('Collector is now active for 25 seconds.');
+    warn('Collector is now active for 25 seconds.');
 
     const collector = buttonInteraction.channel.createMessageComponentCollector({
         filter,
@@ -178,7 +184,7 @@ async function add(buttonInteraction) {
     });
 
     collector.on('collect', async (selectInteraction) => {
-        console.log('Option selected:', selectInteraction.values[0]); // Log selected value
+        log('Option selected:', selectInteraction.values[0]); // Log selected value
         const selectedChannelId = selectInteraction.values[0]; // Get the selected channel ID
         const selectedChannel = availableChannels.find(channel => channel.channelId === selectedChannelId); // Find the selected channel
         
@@ -187,7 +193,7 @@ async function add(buttonInteraction) {
     });
 
     collector.on('end', (collected, reason) => {
-        console.log(`Collector ended due to: ${reason}`);
+        error(`Collector ended due to: ${reason}`);
         if (reason === 'time') {
             buttonInteraction.editReply({ content: '⚠ You took too long to select a channel.', components: [] });
         }
@@ -196,44 +202,69 @@ async function add(buttonInteraction) {
 
 
 async function update(selectedChannel, buttonInteraction, selectInteraction) {
-    // Retrieve the server settings from the database
     const server = await Server.findOne({ guildId: buttonInteraction.guild.id });
 
     if (!server) {
-        return selectInteraction.update({
+        return safeReply(selectInteraction, {
             content: '⚠ Server settings not found. Please try again later.',
             components: []
         });
     }
 
-    // Ensure channels array exists
     if (!Array.isArray(server.settings.channels)) {
         server.settings.channels = [];
     }
 
-    // Add the selected channel to the server settings
+    // Add new channel
     server.settings.channels.push({
         name: selectedChannel.name,
         channelId: selectedChannel.channelId,
     });
 
-    // Save the updated settings
     try {
         await Server.updateOne(
             { guildId: buttonInteraction.guild.id },
             { $set: { 'settings.channels': server.settings.channels } }
         );
 
-        // Send a confirmation message
-        await selectInteraction.update({
+        // ✅ Re-fetch updated channel list
+        const updated = await Server.findOne({ guildId: buttonInteraction.guild.id });
+        const channels = updated?.settings?.channels || [];
+        const index = Math.max(0, channels.length - 1); // point to newly added
+
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle('Voice Channel Settings')
+            .setDescription(`Currently selected:\n**${channels[index].name}** (ID: ${channels[index].channelId})`)
+            .setTimestamp();
+
+        const row1 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('prev').setLabel('⬆️').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('next').setLabel('⬇️').setStyle(ButtonStyle.Primary),
+        );
+        const row2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('add').setLabel('+ Add').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('remove').setLabel('🗑 Remove').setStyle(ButtonStyle.Danger)
+        );
+
+        return safeReply(selectInteraction, {
             content: `✅ Channel **${selectedChannel.name}** has been added to the tracked channels.`,
-            components: []
+            embeds: [embed],
+            components: [row1, row2]
         });
-    } catch (error) {
-        console.error('Error updating server settings:', error);
-        await selectInteraction.update({
+
+    } catch (err) {
+        error('Error updating server settings: ', err);
+        return safeReply(selectInteraction, {
             content: '⚠ Failed to add the channel. Please try again later.',
             components: []
         });
+    }
+}
+function safeReply(interaction, payload) {
+    if (!interaction.replied && !interaction.deferred) {
+        return interaction.update(payload);
+    } else {
+        return interaction.editReply(payload);
     }
 }

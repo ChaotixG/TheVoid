@@ -1,5 +1,6 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const {rehydrateVoiceChannels} = require('./utils/rehydrateVoiceChannels');
+const { log, error } = require("./services/logger")
 const { Client, GatewayIntentBits } = require('discord.js');
 const client = new Client({ intents: [
     GatewayIntentBits.Guilds,
@@ -15,15 +16,15 @@ const eventHandler = require('./handlers/eventHandler');
     try {
         mongoose.set('strictQuery', false);
         await mongoose.connect(process.env.MONGODB_URI);
-        console.log('Connected to MongoDB!');
+        log('Connected to MongoDB!');
 
         eventHandler(client);
 
-        client.on('ready', () => console.log('Bot is online!'));
+        client.on('ready', () => log('Bot is online!'));
         await client.login(process.env.TOKEN);
         await rehydrateVoiceChannels(client); // 👈 Add this call
 
-    } catch (error) {
-        console.error(`Error: ${error}`);
+    } catch (err) {
+        error(`Error: `, err);
     }
 })();

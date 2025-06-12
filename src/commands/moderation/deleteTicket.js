@@ -1,4 +1,5 @@
 const { PermissionsBitField } = require('discord.js');
+const { log, error } = require("../../services/logger")
 
 module.exports = {
     name: 'delete',
@@ -28,9 +29,9 @@ module.exports = {
         // Delete the ticket
         try {
             await ticket.delete();
-            console.log(`🗑️ ticket deleted by ${interaction.user.tag}: ${ticket.name}`);
-        } catch (error) {
-            console.error('❌ Error deleting ticket:', error);
+            log(`🗑️ ticket deleted by ${interaction.user.tag}: ${ticket.name}`);
+        } catch (err) {
+            error('❌ Error deleting ticket: ', err);
             return interaction.reply({ content: '❌ Failed to delete the ticket.', flags: 64 });
         }
     }

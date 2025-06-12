@@ -1,3 +1,4 @@
+const { error } = require("../services/logger")
 module.exports = async (client, guildId) => {
   try {
     let applicationCommands;
@@ -11,8 +12,8 @@ module.exports = async (client, guildId) => {
 
     await applicationCommands.fetch();
     return applicationCommands;
-  } catch (error) {
-    console.error('Failed to fetch application commands:', error);
+  } catch (err) {
+    error('Failed to fetch application commands: ', err);
     throw error;  // Re-throw or return a fallback if needed
   }
 };
