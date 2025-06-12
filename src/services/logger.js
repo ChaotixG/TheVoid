@@ -35,7 +35,7 @@ const log = (level, message, error = null) => {
                 break;
             default:
                 // Default to console.log for any unknown levels
-                console.log(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}- ${message}${COLORS.reset}`);
+                console.log(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}`/*- ${message}${COLORS.reset}`*/);
                 break;
         }
     }
