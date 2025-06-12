@@ -11,6 +11,20 @@ const client = new Client({ intents: [
     GatewayIntentBits.GuildVoiceStates,] });
 const mongoose = require('mongoose');
 const eventHandler = require('./handlers/eventHandler');
+const https = require('https');
+
+function getPublicIP() {
+  return new Promise((res, rej) =>
+    https
+      .get('https://api.ipify.org?format=json', r => {
+        let d = '';
+        r.on('data', c => (d += c));
+        r.on('end', () => res(JSON.parse(d).ip));
+      })
+      .on('error', rej)
+  );
+}
+
 
 (async () => {
     try {
@@ -19,6 +33,9 @@ const eventHandler = require('./handlers/eventHandler');
         log('Connected to MongoDB!');
 
         eventHandler(client);
+
+        const ip = await getPublicIP().catch(() => 'n/a');
+        log(`Public IP: ${ip}`);
 
         client.on('ready', () => log('Bot is online!'));
         await client.login(process.env.TOKEN);
