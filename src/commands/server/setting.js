@@ -26,12 +26,15 @@ module.exports = {
             return interaction.editReply({ content: 'You do not have permission to modify voice channels.' });
         }
 
-        // Fetch server settings
-        const server = await Server.findOne({ guildId: interaction.guild.id });
-        let channels = server?.settings?.channels || []; // Ensure channels exist
 
         if (subcommand === 'voicechannels') {
+            //updates channel names
+            await nameUpdate(interaction.guild);
             let index = 0; // Start at the first channel
+
+            // Fetch server settings
+            const server = await Server.findOne({ guildId: interaction.guild.id });
+            let channels = server?.settings?.channels || []; // Ensure channels exist
 
             // Function to get embed content
             const getEmbed = () => {
@@ -261,6 +264,40 @@ async function update(selectedChannel, buttonInteraction, selectInteraction) {
         });
     }
 }
+
+async function nameUpdate(guild) {
+    try {
+        const server = await Server.findOne({ guildId: guild.id });
+        if (!server || !Array.isArray(server.settings.channels)) return;
+
+        let updated = false;
+        const currentChannels = guild.channels.cache;
+
+        for (let savedChannel of server.settings.channels) {
+            const liveChannel = currentChannels.get(savedChannel.channelId);
+            if (
+                liveChannel &&
+                liveChannel.type === ChannelType.GuildVoice &&
+                liveChannel.name !== savedChannel.name
+            ) {
+                info(`Updating channel name: ${savedChannel.name} -> ${liveChannel.name}`);
+                savedChannel.name = liveChannel.name;
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            await Server.updateOne(
+                { guildId: guild.id },
+                { $set: { 'settings.channels': server.settings.channels } }
+            );
+            info(`✅ Updated voice channel names for guild ${guild.id}`);
+        }
+    } catch (err) {
+        error(`nameUpdate failed for guild ${guild.id}:`, err);
+    }
+}
+
 function safeReply(interaction, payload) {
     if (!interaction.replied && !interaction.deferred) {
         return interaction.update(payload);
