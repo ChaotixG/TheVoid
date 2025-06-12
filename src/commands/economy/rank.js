@@ -74,7 +74,7 @@ module.exports = {
                 container: {
                     style: {
                     backgroundColor: '#23272b',   // your card background
-                    border: `6px solid ${roleHex}`,   // 6px thick border in your chosen color
+                    border: `6px solid #484b51`,   // 6px thick border in your chosen color
                     borderRadius: '16px',          // match or tweak your corner radius
                     padding: '8px'                // keep your inner spacing
                     }
