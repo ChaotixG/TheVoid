@@ -14,6 +14,14 @@ const eventHandler = require('./handlers/eventHandler');
 const https = require('https');
 const DigestFetch = require('digest-fetch').default;
 const clientDigest = new DigestFetch(process.env.MONGODB_PUBLIC_KEY, process.env.MONGODB_PRIVATE_KEY);
+const axios = require('axios');
+const authHeader = {
+    auth: {
+        username: process.env.MONGODB_PUBLIC_KEY,
+        password: process.env.MONGODB_PRIVATE_KEY
+    }
+};
+
 
 
 function getPublicIP() {
@@ -41,16 +49,57 @@ async function getCurrentAccessList() {
     return data.results.map(entry => entry.ipAddress);
 }
 
+async function removeIPsByComment(commentToMatch) {
+    const listUrl = `https://cloud.mongodb.com/api/atlas/v1.0/groups/${process.env.MONGODB_PROJECT_ID}/accessList`;
+    const res = await clientDigest.fetch(listUrl);
+    const data = await res.json();
+
+    if (!Array.isArray(data.results)) {
+        throw new Error("Failed to fetch access list");
+    }
+
+    const targets = data.results.filter(entry =>
+        entry.comment?.trim().toLowerCase() === commentToMatch.trim().toLowerCase() &&
+        !!entry.ipAddress &&
+        !!entry.cidrBlock
+    );
+
+    if (targets.length === 0) {
+        log(`No IPs found with comment "${commentToMatch}"`);
+        return;
+    }
+
+    try {
+        for (const entry of targets) {
+            const deleteUrl = `${listUrl}/${encodeURIComponent(entry.cidrBlock)}`;
+            const delRes = await clientDigest.fetch(deleteUrl, { method: 'DELETE' });
+
+            if (delRes.ok) {
+                log(`✅ IP ${entry.ipAddress} (${entry.cidrBlock}) removed from whitelist`);
+            } else {
+                const errText = await delRes.text();
+                error(`❌ Failed to remove IP ${entry.ipAddress}:`, errText);
+            }
+        }
+    } catch (err) {
+        error(`Error removing IPs by comment:`, err);
+    }
+}
+
 
 async function addIPIfNeeded(ip) {
     const currentList = await getCurrentAccessList();
     if (currentList.includes(ip)) {
         log(`IP ${ip} already whitelisted`);
-        return;
+      return;
     }
+    await removeIPsByComment(process.env.IP_DISCRIMINATOR).catch(err => {
+        error(`Failed to remove old IPs: ${err.message}`);
+      }
+    );
 
     const url = `https://cloud.mongodb.com/api/atlas/v1.0/groups/${process.env.MONGODB_PROJECT_ID}/accessList`;
-    const payload = JSON.stringify([{ ipAddress: ip, comment: "Auto-whitelisted" }]);
+    const payload = JSON.stringify([{ ipAddress: ip, comment: process.env.IP_DISCRIMINATOR }]);
 
     const res = await clientDigest.fetch(url, {
         method: 'POST',
