@@ -17,6 +17,7 @@
     "dotenv": "^16.5.0",
     "mongoose": "^8.10.0",
     "nodemon": "^3.1.9",
-    "sharp": "^0.34.2"
+    "sharp": "^0.34.2",
+    "digest-fetch":"^3.1.1"
   }
 }
