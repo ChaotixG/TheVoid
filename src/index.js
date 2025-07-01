@@ -28,14 +28,15 @@ function getPublicIP() {
 
 (async () => {
     try {
+        const ip = await getPublicIP().catch(() => 'n/a');
+        log(`Public IP: ${ip}`);
+        
         mongoose.set('strictQuery', false);
         await mongoose.connect(process.env.MONGODB_URI);
         log('Connected to MongoDB!');
 
         eventHandler(client);
 
-        const ip = await getPublicIP().catch(() => 'n/a');
-        log(`Public IP: ${ip}`);
 
         client.on('ready', () => log('Bot is online!'));
         await client.login(process.env.TOKEN);
