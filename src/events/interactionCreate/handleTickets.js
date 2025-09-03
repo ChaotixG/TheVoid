@@ -29,7 +29,7 @@ module.exports = async (client, interaction) => {
         if (!interaction.replied && !interaction.deferred) {
             return interaction.reply({
                 content: `No matching modal file found for type: **${selectedType}**`,
-                ephemeral: true
+                flags: 64
             });
         }
         return;
@@ -46,7 +46,7 @@ module.exports = async (client, interaction) => {
             if (!interaction.replied && !interaction.deferred) {
                 return interaction.reply({
                     content: `Modal file ${modalFile} is missing required properties.`,
-                    ephemeral: true
+                    flags: 64
                 });
             }
             return;
@@ -69,7 +69,7 @@ module.exports = async (client, interaction) => {
 
             modalInteraction.reply({
                 content: `Successfully submitted!`,
-                ephemeral: true
+                flags: 64
             });
 
             // Delete the message after 5 seconds (5000 milliseconds)
@@ -84,7 +84,7 @@ module.exports = async (client, interaction) => {
             if (!interaction.replied) {
                 await interaction.followUp({
                     content: "There was an issue processing your submission or it timed out.",
-                    ephemeral: true
+                    flags: 64
                 });
             }
         }
@@ -94,7 +94,7 @@ module.exports = async (client, interaction) => {
         if (!interaction.replied && !interaction.deferred) {
             return interaction.reply({
                 content: `Error loading modal file: ${err}`,
-                ephemeral: true
+                flags: 64
             });
         }
     }

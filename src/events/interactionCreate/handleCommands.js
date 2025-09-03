@@ -15,7 +15,7 @@ module.exports = async (client, interaction) => {
             if (!(interaction.guild.id === testServer)){
                 interaction.reply({
                     content: 'This command cannot be ran here.',
-                    ephemeral: true,
+                    flags: 64
                 })
                 return;
             }

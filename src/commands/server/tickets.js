@@ -44,7 +44,7 @@ module.exports = {
             }
         });
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
 
 const actionRow = new ActionRowBuilder().addComponents(selectTypeMenu);
 await interaction.editReply({
@@ -91,7 +91,7 @@ try {
 
     await modalSubmission.reply({
         content: 'Your ticket has been submitted successfully!',
-        ephemeral: true
+        flags: 64
     });
 } catch (err) {
     error("Error processing ticket: ", err);
@@ -99,7 +99,7 @@ try {
     if (!interaction.replied) {
         await interaction.followUp({
             content: "There was an error processing your request.",
-            ephemeral: true
+            flags: 64
         });
     }
 }
