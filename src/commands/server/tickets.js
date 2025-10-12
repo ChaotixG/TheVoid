@@ -20,9 +20,9 @@ module.exports = {
                     .setDescription('Suggest a new feature for the server.')
                     .setValue('suggestion'),
                 new StringSelectMenuOptionBuilder()
-                    .setLabel('Complaint')
+                    .setLabel('Issue')
                     .setDescription('Report a user or issue.')
-                    .setValue('complaint')
+                    .setValue('issue')
             );
 
         const roleOptions = [
