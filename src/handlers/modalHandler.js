@@ -1,15 +1,13 @@
 // src/handlers/modalHandler.js
-const { InteractionType } = require('discord.js');
+module.exports = (interaction) => {
+    const values = {};
 
-module.exports = async (interaction) => {
-  if (interaction.type !== InteractionType.ModalSubmit) return;
+    for (const [customId, field] of interaction.fields.fields) {
+        values[customId] = field.value;
+    }
 
-  // Extract all submitted fields into a simple object: { title: '…', description: '…', … }
-  const values = {};
-  for (const [customId, textInput] of interaction.fields.fields) {
-    values[customId] = textInput.value;
-  }
-
-  // Return the values—no replies or deferrals here.
-  return { customId: interaction.customId, values };
+    return {
+        modalId: interaction.customId,
+        values
+    };
 };

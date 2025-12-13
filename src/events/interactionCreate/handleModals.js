@@ -1,36 +1,30 @@
+// src/events/interactionCreate/handleModals.js
 const { ModalSubmitInteraction } = require('discord.js');
-const { error } = require("../../services/logger")
+const parseModal = require('../../handlers/modalHandler');
+const { error } = require('../../services/logger');
 
 module.exports = async (interaction) => {
-    if (!(interaction instanceof ModalSubmitInteraction)) return;  // Early return for non-modal interactions
+    if (!(interaction instanceof ModalSubmitInteraction)) return;
 
     try {
-        // This will store the form data
-        const formData = {};
+        const { modalId, values } = parseModal(interaction);
 
-        // Check if there are fields in the modal submission
-        if (interaction.fields) {
-            interaction.fields.fields.forEach((field, key) => {
-                formData[key] = field.value;
-            });
-        } else {
-            throw new Error('No fields found in the modal interaction');
+        switch (modalId) {
+            case 'complaintModal':
+                await handleComplaint(interaction, values);
+                break;
+
+            default:
+                console.warn(`Unhandled modal: ${modalId}`);
         }
-
-        // Return the form data
-        return formData;
     } catch (err) {
-        error('Error handling modal submission: ', err);
+        error('Error handling modal submission:', err);
 
-        // Handle error gracefully by replying to the interaction
-        if (interaction && typeof interaction.reply === 'function') {
+        if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({
-                content: 'An error occurred while processing the modal submission.',
+                content: 'An error occurred while processing the form.',
                 flags: 64,
             });
         }
-
-        // Return null or handle the error as needed
-        return null;
     }
 };

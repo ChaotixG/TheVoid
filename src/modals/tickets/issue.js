@@ -21,12 +21,14 @@ module.exports = {
             required: true
         },
         {
-            type: 'text',
-            customId: 'userComplaint',
-            label: 'User',
-            style: TextInputStyle.Short, // Use TextInputStyle.Short for a single-line input
-            placeholder: 'if applicable, entre the username of the user you are reporting',
-            required: false
+            type: 'label',
+            label: 'Choose your user (optional)',
+            customId: 'reportedUser',
+            component: {
+                type: 'userSelect',
+                customId: 'reportedUser',
+                placeholder: 'Select a user to report (optional)',
+            }
         }
     ]
 };

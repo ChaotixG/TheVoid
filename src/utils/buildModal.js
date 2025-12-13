@@ -1,30 +1,58 @@
-const { ModalBuilder, TextInputBuilder, ActionRowBuilder, TextInputStyle } = require('discord.js');
+const {
+    ModalBuilder,
+    ActionRowBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    LabelBuilder,
+    UserSelectMenuBuilder,
+} = require('discord.js');
 
 module.exports = (customId, title, inputs) => {
     const modal = new ModalBuilder()
         .setCustomId(customId)
         .setTitle(title);
 
-    const actionRows = inputs.map(input => {
-        const component = new TextInputBuilder()
-            .setCustomId(input.customId)
-            .setLabel(input.label)
-            .setStyle(input.style);
+    for (const input of inputs) {
+        const type = input.type ?? 'text';
+        //console.log(input);
+        //console.log(input.label);
+        if (type === 'text') {
+            const textInput = new TextInputBuilder()
+                .setCustomId(input.customId)
+                .setLabel(input.label)
+                .setStyle(input.style)
+                .setRequired(input.required ?? true);
 
-        if (input.placeholder) {
-            component.setPlaceholder(input.placeholder);
+            if (input.placeholder) {
+                textInput.setPlaceholder(input.placeholder);
+            }
+
+            modal.addComponents(
+                new ActionRowBuilder().addComponents(textInput)
+            );
         }
 
-        if (input.hasOwnProperty('required')) {
-            component.setRequired(input.required);
-        } else {
-            component.setRequired(true);
+        else if (type === 'label' && input.component?.type === 'userSelect') {
+            const userSelect = new UserSelectMenuBuilder()
+                .setCustomId(input.component.customId)
+                .setPlaceholder(input.component.placeholder ?? '')
+                .setRequired(input.required ?? false);
+
+            const label = new LabelBuilder()
+                .setLabel(input.label)
+                .setUserSelectMenuComponent(userSelect);
+
+            modal.addLabelComponents(label);
+            continue;
         }
 
-        return new ActionRowBuilder().addComponents(component);
-    });
-
-    modal.addComponents(...actionRows);
+        // ─────────────────────────────
+        // UNKNOWN TYPE
+        // ─────────────────────────────
+        else {
+            throw new Error(`Unsupported modal input type: ${input.type}`);
+        }
+    }
 
     return modal;
 };
