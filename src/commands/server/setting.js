@@ -13,6 +13,11 @@ module.exports = {
         },
         {
             type: 1,
+            name: 'tickets',
+            description: 'Handle other settings'
+        },
+        {
+            type: 1,
             name: 'other',
             description: 'Handle other settings'
         }
@@ -30,7 +35,9 @@ module.exports = {
         if (subcommand === 'voicechannels') {
             //updates channel names
             await nameUpdate(interaction.guild);
-            let index = 0; // Start at the first channel
+            let selectedIndex = 0;
+            const ITEMS_PER_PAGE = 5;
+            let pageIndex = Math.floor(selectedIndex / ITEMS_PER_PAGE);
 
             // Fetch server settings
             const server = await Server.findOne({ guildId: interaction.guild.id });
@@ -46,8 +53,7 @@ module.exports = {
                 let rows = [];
 
                 if (Array.isArray(channels) && channels.length > 0) {
-                    // Create buttons for navigation
-                    const row1 = new ActionRowBuilder().addComponents(
+                    const row1 = new ActionRowBuilder().addComponents( 
                         new ButtonBuilder().setCustomId('prev').setLabel('⬆️').setStyle(ButtonStyle.Primary),
                         new ButtonBuilder().setCustomId('next').setLabel('⬇️').setStyle(ButtonStyle.Primary),
                     );
@@ -56,16 +62,27 @@ module.exports = {
                         new ButtonBuilder().setCustomId('remove').setLabel('🗑 Remove').setStyle(ButtonStyle.Danger)
                     );
                     rows = [row1, row2];
-                    embed.setDescription(`Currently selected:\n**${channels[index].name}** (ID: ${channels[index].channelId})`);
+
+                    const start = Math.floor(selectedIndex / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
+                    const currentSlice = channels.slice(start, start + ITEMS_PER_PAGE);
+
+                    let description = currentSlice.map((ch, i) => {
+                        const globalIndex = start + i;
+                        const prefix = globalIndex === selectedIndex ? '👉 ' : '   ';
+                        return `${prefix}**${ch.name}** (ID: ${ch.channelId})`;
+                    }).join('\n');
+
+                    embed.setDescription(`Tracked Channels:\n${description}`);
                 } else {
-                    const row1 = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('add').setLabel('+ Add').setStyle(ButtonStyle.Success));
+                    const row1 = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId('add').setLabel('+ Add').setStyle(ButtonStyle.Success)
+                    );
                     rows = [row1];
                     embed.setDescription('No voice channels are currently tracked.');
                 }
 
                 return { embed, rows };
             };
-
             // Send initial message
             const { embed, rows } = getEmbed();
             const message = await interaction.editReply({ embeds: [embed], components: rows });
@@ -80,23 +97,24 @@ module.exports = {
                 let notifyMessage = null;
 
                 if (buttonInteraction.customId === 'prev') {
-                    index = (index - 1 + channels.length) % channels.length;
+                    if (selectedIndex > 0) selectedIndex--;
                 } else if (buttonInteraction.customId === 'next') {
-                    index = (index + 1) % channels.length;
-                } else if (buttonInteraction.customId === 'remove') {
+                    if (selectedIndex < channels.length - 1) selectedIndex++;
+                }
+                else if (buttonInteraction.customId === 'remove') {
                     if (channels.length > 0) {
-                        const removed = channels.splice(index, 1)[0];
+                        const removed = channels.splice(selectedIndex, 1)[0];
                         await Server.updateOne(
                             { guildId: interaction.guild.id },
                             { $set: { 'settings.channels': channels } }
                         );
                         notifyMessage = `✅ Removed **${removed.name}** from tracked channels.`;
-                        index = Math.min(index, channels.length - 1);
+                        selectedIndex = Math.min(selectedIndex, channels.length - 1);
                     } else {
                         notifyMessage = '⚠ No channels to remove.';
                     }
                 } else if (buttonInteraction.customId === 'add') {
-                    return await add(buttonInteraction); // early return avoids extra editReply()
+                    return await add(buttonInteraction);
                 }
 
                 const { embed, rows } = getEmbed();
@@ -106,7 +124,6 @@ module.exports = {
                     components: rows
                 });
             });
-
 
             collector.on('end', async (collected, reason) => {
                 error(`Select menu collector ended due to: ${reason}`);
@@ -122,6 +139,8 @@ module.exports = {
                 }
             });
 
+        } else if (subcommand === 'tickets') {
+            await interaction.editReply({ content: 'Ticket settings logic here!' });
         } else if (subcommand === 'other') {
             await interaction.editReply({ content: 'Other settings logic here!' });
         }
