@@ -55,14 +55,17 @@ module.exports = (client) => {
                 if (interactionHandlers.handleTickets) {
                     interactionHandlers.handleTickets(client, interaction);
                 }
+            } else if (interaction.isButton()) {
+                if (interactionHandlers.handleButtons) {
+                    await interactionHandlers.handleButtons(client, interaction);
+                }
             } else if (interaction.isModalSubmit()) {
                 if (interactionHandlers.handleModals) {
-                    await interactionHandlers.handleModals(interaction);
+                    await interactionHandlers.handleModals(client, interaction);
                 }
-            }
+            } 
         } catch (err) {
             error('Error handling interaction: ', err);
         }
     });
 };
- 

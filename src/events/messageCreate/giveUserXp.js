@@ -22,26 +22,20 @@ module.exports = async (client, message) => {
         .setColor('#5a4786')
         .setTitle('Level Up!');
 
-    // Check if message is in a guild, author is not a bot, and if cooldown has passed
     if (!message.inGuild() || message.author.bot || cooldowns.has(message.author.id)) return;
 
-    // Random XP to give
     const xpToGive = getRandomXp(10, 35);
 
-    // Define the query to find the user inside the server
     const guildId = message.guild.id;
     const userId = message.author.id;
 
     try {
-        // Find the server by guildId
         const server = await Server.findOne({ guildId });
 
         if (server) {
-            // Find the user within the server's users array
             const user = server.users.find(user => user.userId === userId);
 
             if (user) {
-                // If user exists, update their XP
                 user.xp += xpToGive;
                 if (user.xp >= calculateLevelXp(user.level)) {
                     user.level += 1;
@@ -50,7 +44,6 @@ module.exports = async (client, message) => {
                 }
                 await server.save();
             } else {
-                // If user doesn't exist, create a new user in the server's users array
                 const newUser = {
                     userId: message.author.id,
                     level: 1,
@@ -63,10 +56,9 @@ module.exports = async (client, message) => {
                 cooldowns.add(message.author.id);
                 setTimeout(() => {
                     cooldowns.delete(message.author.id);
-                }, 1000);
+                }, 100);
             }
         } else {
-            // If server does not exist, create a new server entry and add the user
             const newServer = new Server({
                 guildId,
                 channelsId: [],

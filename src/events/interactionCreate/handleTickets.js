@@ -1,17 +1,17 @@
-//handleTickets.js
+// handleTickets.js
 const path = require('path');
 const buildModal = require('../../utils/buildModal');
 const getAllFiles = require('../../utils/getAllFiles');
-const api = require('./../../services/customApi');
-const { log, warn, error } = require("../../services/logger")
+const { log, warn, error } = require("../../services/logger");
 
-// Track processed interactions
+// Track processed interactions (good practice)
 const processedInteractions = new Set();
 
 module.exports = async (client, interaction) => {
+    log('[debug] handleTickets called');
+
     if (!interaction.isStringSelectMenu() || interaction.customId !== 'ticketType') return;
 
-    // Prevent duplicate processing
     if (processedInteractions.has(interaction.id)) {
         warn(`Interaction ${interaction.id} already processed.`);
         return;
@@ -21,81 +21,46 @@ module.exports = async (client, interaction) => {
     const selectedType = interaction.values[0];
     log(`User selected: ${selectedType}`);
 
-    const modals = getAllFiles('./src/modals/tickets', false, true, false, false);
-    const modalFile = modals.find(file => file.toLowerCase().includes(selectedType));
-
-    if (!modalFile) {
-        error(`No matching modal file found for type: ${selectedType}`);
-        if (!interaction.replied && !interaction.deferred) {
-            return interaction.reply({
-                content: `No matching modal file found for type: **${selectedType}**`,
-                flags: 64
-            });
-        }
-        return;
-    }
-
-    log(`Loading modal file: ${modalFile}`);
-
     try {
+        // Load modal config/file (your existing logic)
+        const modals = getAllFiles('./src/modals/tickets', false, true, false, false);
+        const modalFile = modals.find(file => file.toLowerCase().includes(selectedType));
+
+        if (!modalFile) {
+            error(`No matching modal file for: ${selectedType}`);
+            await interaction.reply({
+                content: `No form available for **${selectedType}**.`,
+                ephemeral: true
+            });
+            return;
+        }
+
+        log(`Loading modal: ${modalFile}`);
         const modalPath = path.join(__dirname, `./../../../${modalFile}`);
         const modalModule = require(modalPath);
 
         if (!modalModule.customId || !modalModule.title || !modalModule.inputs) {
-            error(`Modal file ${modalFile} is missing required properties.`);
-            if (!interaction.replied && !interaction.deferred) {
-                return interaction.reply({
-                    content: `Modal file ${modalFile} is missing required properties.`,
-                    flags: 64
-                });
-            }
-            return;
+            throw new Error(`Missing properties in ${modalFile}`);
         }
 
         const modal = buildModal(modalModule.customId, modalModule.title, modalModule.inputs);
-        //await interaction.showModal(modal); // Acknowledges the interaction
 
-        // Await modal submission
-        const filter = (modalInteraction) =>
-            modalInteraction.customId === modalModule.customId && modalInteraction.user.id === interaction.user.id;
+        // SHOW MODAL FIRST — this automatically acknowledges the interaction
+        log(`Showing modal: ${modalModule.customId}`);
+        await interaction.showModal(modal);
 
-        try {
-            const modalInteraction = await interaction.awaitModalSubmit({ filter, time: 90000 });
-
-            const response = modalInteraction.fields.fields.map(field => ({
-                customId: field.customId,
-                value: field.value
-            }));
-
-            modalInteraction.reply({
-                content: `Successfully submitted!`,
-                flags: 64
-            });
-
-            // Delete the message after 5 seconds (5000 milliseconds)
-            api.deleteMessage(modalInteraction, 5000);
-
-            // Clean up processed interaction
-            processedInteractions.delete(interaction.id);
-            
-            return response;
-        } catch (err) {
-            error("Error handling modal submission: ", err);
-            if (!interaction.replied) {
-                await interaction.followUp({
-                    content: "There was an issue processing your submission or it timed out.",
-                    flags: 64
-                });
-            }
-        }
+        // Clean up
+        processedInteractions.delete(interaction.id);
 
     } catch (err) {
-        error(`Error loading modal file: `, err);
+        error(`Error in handleTickets for ${selectedType}:`, err);
+
+        // Only reply if we haven't acknowledged yet (showModal would have failed earlier if so)
         if (!interaction.replied && !interaction.deferred) {
-            return interaction.reply({
-                content: `Error loading modal file: ${err}`,
-                flags: 64
-            });
+            await interaction.reply({
+                content: "Sorry, couldn't open the form. Try again or contact support.",
+                ephemeral: true
+            }).catch(() => {});
         }
     }
 };

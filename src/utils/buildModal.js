@@ -1,9 +1,8 @@
 const {
     ModalBuilder,
-    ActionRowBuilder,
+    LabelBuilder,
     TextInputBuilder,
     TextInputStyle,
-    LabelBuilder,
     UserSelectMenuBuilder,
 } = require('discord.js');
 
@@ -14,43 +13,44 @@ module.exports = (customId, title, inputs) => {
 
     for (const input of inputs) {
         const type = input.type ?? 'text';
-        //console.log(input);
-        //console.log(input.label);
+
         if (type === 'text') {
             const textInput = new TextInputBuilder()
                 .setCustomId(input.customId)
-                .setLabel(input.label)
                 .setStyle(input.style)
-                .setRequired(input.required ?? true);
+                .setRequired(input.required ?? false);
 
-            if (input.placeholder) {
-                textInput.setPlaceholder(input.placeholder);
-            }
+            if (input.placeholder) textInput.setPlaceholder(input.placeholder);
+            if (input.minLength) textInput.setMinLength(input.minLength);
+            if (input.maxLength) textInput.setMaxLength(input.maxLength);
 
-            modal.addComponents(
-                new ActionRowBuilder().addComponents(textInput)
-            );
+            const label = new LabelBuilder()
+                .setLabel(input.label)
+                .setTextInputComponent(textInput);
+
+            if (input.description) label.setDescription(input.description);
+
+            modal.addLabelComponents(label);
         }
-
         else if (type === 'label' && input.component?.type === 'userSelect') {
             const userSelect = new UserSelectMenuBuilder()
                 .setCustomId(input.component.customId)
                 .setPlaceholder(input.component.placeholder ?? '')
                 .setRequired(input.required ?? false);
 
+            if (input.component.minValues) userSelect.setMinValues(input.component.minValues);
+            if (input.component.maxValues) userSelect.setMaxValues(input.component.maxValues);
+
             const label = new LabelBuilder()
                 .setLabel(input.label)
                 .setUserSelectMenuComponent(userSelect);
 
-            modal.addLabelComponents(label);
-            continue;
-        }
+            if (input.description) label.setDescription(input.description);
 
-        // ─────────────────────────────
-        // UNKNOWN TYPE
-        // ─────────────────────────────
+            modal.addLabelComponents(label);
+        }
         else {
-            throw new Error(`Unsupported modal input type: ${input.type}`);
+            throw new Error(`Unsupported modal input type: ${type}`);
         }
     }
 

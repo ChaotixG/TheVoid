@@ -227,101 +227,87 @@ const handleVoiceStateUpdate = async (client, oldState, newState) => {
 
 async function namePrompting(channel, userId) {
     try {
-        // Send an initial message to the channel with the ephemeral flag
-        const message = await channel.send({
-            content: 'Preparing button...',
-        });
+        const message = await channel.send({ content: 'Preparing button...' });
 
-        // Create the button with the 'SUCCESS' style (green)
         const button = new ButtonBuilder()
             .setCustomId('nameVoiceChat')
             .setLabel('Name Voice Chat')
             .setStyle(ButtonStyle.Success);
 
-        // Create an action row to hold the button
         const row = new ActionRowBuilder().addComponents(button);
 
-        // Send the message with the button
         await message.edit({
             content: `<@${userId}> click the button to name the voice chat:`,
             components: [row],
         });
 
-        // Set up a filter to collect button interactions (only from the user who clicked the button)
         const filter = i => i.customId === 'nameVoiceChat' && i.user.id === userId;
 
-        // Wait for a button interaction (timeout in 10 seconds)
         const collected = await channel.awaitMessageComponent({
             filter,
-            time: 18000, // 10 seconds timeout
+            time: 18000,
         }).catch(err => {
             error('Error collecting button interaction: ', err);
             api.deleteEntity(message);
             return null;
         });
 
-        // Handle interaction or timeout
-        if (collected) {
-            // Create the modal for input
-            const modal = new ModalBuilder()
-                .setCustomId('chatNameModal')
-                .setTitle('Name Your Voice Chat')
-                .addComponents(
-                    new ActionRowBuilder().addComponents(
-                        new TextInputBuilder()
-                            .setCustomId('chatName')
-                            .setLabel('Enter the name of the voice chat:')
-                            .setStyle(TextInputStyle.Short)
-                            .setRequired(true)
-                    )
-                );
-
-            // Show the modal to the user
-            await collected.showModal(modal);
-
-            // Await modal submission
-            try {
-                const modalInteraction = await collected.awaitModalSubmit({
-                    filter: (modalInteraction) => modalInteraction.customId === 'chatNameModal' && modalInteraction.user.id === collected.user.id,
-                    time: 90000,  // Adjust time as needed
-                });
-
-                // Handle modal submission using the handleModals function
-                const formData = await handleModals(modalInteraction);
-                api.deleteEntity(message);
-
-                // Check if formData is valid and chatName exists
-                if (formData && formData.chatName) {
-                    const chatName = formData.chatName;
-
-                    // Respond to the user or continue with your logic
-                    await modalInteraction.reply({
-                        content: `Voice chat named: ${chatName}`,
-                        flags: 64,
-                    });
-
-                    return chatName;  // Return the value to the function
-                } else {
-                    // Handle the case where chatName is missing or invalid
-                    const m = await modalInteraction.reply({
-                        content: 'You didn\'t provide a valid chat name.',
-                    });
-                    api.deleteEntity(m, 5000);
-                    return null;
-                }
-            } catch (err) {
-                error('Error handling modal submission: ', err);
-                api.deleteEntity(message);
-                return null;  // Return null or handle errors as needed
-            }
-        } else {
+        if (!collected) {
             const m = await message.edit({
                 content: 'You didn\'t click the button in time. Please try again later.',
-                components: [], // Remove the button after timeout
+                components: [],
             });
             api.deleteEntity(m, 5000);
             return null;
         }
+
+        // ── Modal part ────────────────────────────────────────
+        const modal = new ModalBuilder()
+            .setCustomId('chatNameModal')
+            .setTitle('Name Your Voice Chat')
+            .addComponents(
+                new ActionRowBuilder().addComponents(
+                    new TextInputBuilder()
+                        .setCustomId('chatName')
+                        .setLabel('Enter the name of the voice chat:')
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true)
+                )
+            );
+
+        await collected.showModal(modal);
+
+        try {
+            const modalInteraction = await collected.awaitModalSubmit({
+                filter: i => i.customId === 'chatNameModal' && i.user.id === collected.user.id,
+                time: 90000,
+            });
+
+            await modalInteraction.deferReply({ ephemeral: true });
+
+            const chatName = modalInteraction.fields.getTextInputValue('chatName')?.trim() || '';
+
+            api.deleteEntity(message);
+
+            if (!chatName) {
+                await modalInteraction.editReply({
+                    content: 'You didn\'t provide a valid chat name.',
+                });
+                return null;
+            }
+
+            await modalInteraction.editReply({
+                content: `Voice chat named: ${chatName}`,
+            });
+
+            return chatName;
+
+        } catch (err) {
+            error('Error handling modal submission: ', err);
+            api.deleteEntity(message);
+            return null;
+        }
+
     } catch (err) {
         error('Error in namePrompting function: ', err);
         const m = await channel.send({

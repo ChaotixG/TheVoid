@@ -1,22 +1,22 @@
 const { TextInputStyle } = require('discord.js');
 
 module.exports = {
-    customId: 'suggestionModal',
+    customId: 'ticket_suggestion',
     title: 'Submit a Suggestion',
     inputs: [
         {
             type: 'text',
-            customId: 'suggestionTitleInput',
+            customId: 'title',                    // ← standardized
             label: 'Title for your suggestion',
-            style: TextInputStyle.Short, // Use TextInputStyle.Short for a single-line input
+            style: TextInputStyle.Short,
             placeholder: 'Explain your suggestion in a few words...',
             required: true
         },
         {
             type: 'text',
-            customId: 'suggestionInput',
+            customId: 'description',              // ← standardized
             label: 'Your Suggestion',
-            style: TextInputStyle.Paragraph, // Use TextInputStyle.Short for a single-line input
+            style: TextInputStyle.Paragraph,
             placeholder: 'Enter your suggestion here...',
             required: true
         }

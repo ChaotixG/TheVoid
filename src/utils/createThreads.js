@@ -46,8 +46,6 @@ async function createThread(client, interaction, modalResults, channelId) {
         .setCustomId('delete_ticket')
         .setLabel('Delete Ticket')
         .setStyle(ButtonStyle.Danger)
-        // Only the guild owner can delete:
-        .setDisabled(interaction.guild.ownerId !== interaction.user.id)
     );
 
     // ──────────────────────────────────────────────────────────────────
@@ -83,6 +81,7 @@ async function createThread(client, interaction, modalResults, channelId) {
       info(`Thread created: ${thread.id} (name="${thread.name}")`);
 
       try {
+        await thread.members.add(interaction.user.id); // Add ticket creator to the private thread
         await thread.send({
           content: `<@${interaction.user.id}>`,
           embeds: [threadEmbed],
@@ -90,7 +89,7 @@ async function createThread(client, interaction, modalResults, channelId) {
         });
         log("Message successfully sent into the thread.");
       } catch (err) {
-        error("❌ thread.send() failed: ", err);
+        error("❌ thread.send() or members.add() failed: ", err);
       }
       return;
     }
