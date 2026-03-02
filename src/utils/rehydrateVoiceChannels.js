@@ -16,6 +16,7 @@ async function rehydrateVoiceChannels(client) {
         if (!guild) continue;
 
         for (const ch of server.channels) {
+            console.log(channel.members.size === 0);
             const channel = await guild.channels.fetch(ch.channelId).catch(() => null);
             if (!channel) {
                 warn(`Channel ${ch.channelId} missing. Cleaning up DB.`);
