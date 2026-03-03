@@ -8,27 +8,22 @@ module.exports = async (client, interaction) => {
     const thread = interaction.channel;
 
     // ────────────────────────────────────────────────
-    // Get creator ID reliably using fetchStarterMessage()
+    // Check if user is the thread creator or an admin
     // ────────────────────────────────────────────────
-    let creatorId = null;
-    try {
-      const starterMessage = await thread.fetchStarterMessage({ cache: false });
-      if (starterMessage) {
-        const mentionMatch = starterMessage.content?.match(/<@(\d+)>/);
-        creatorId = mentionMatch ? mentionMatch[1] : null;
-      }
-    } catch (fetchErr) {
-      error("Failed to fetch starter message for creator check:", fetchErr);
-      // Continue anyway – we'll treat as no creator match
-    }
-
-    const isCreator = creatorId && interaction.user.id === creatorId;
-    const hasManageThreads = interaction.member.permissions.has("MANAGE_THREADS");
+    
+    const mesg = await thread.messages.fetch({ limit: 1 });
+    const firstMessage = mesg.first();
+    const creator = firstMessage?.content.slice(2, -1);
+    console.log("Thread creator ID:", creator);
+    
+    const isCreator = interaction.user.id === creator;
+    const isAdmin = interaction.member.permissions.has("Administrator") || 
+                    interaction.member.permissions.has("ManageThreads");
 
     if (interaction.customId === "archive_ticket") {
       await interaction.deferUpdate().catch(() => {}); // Defer only here
 
-      if (!isCreator && !hasManageThreads) {
+      if (!isCreator && !isAdmin) {
         return interaction.followUp({
           content: "You do not have permission to archive this ticket.",
           ephemeral: true,
@@ -45,9 +40,9 @@ module.exports = async (client, interaction) => {
     } else if (interaction.customId === "delete_ticket") {
       await interaction.deferUpdate().catch(() => {}); // Defer only here
 
-      if (interaction.guild.ownerId !== interaction.user.id) {
+      if (!isCreator && !isAdmin && interaction.guild.ownerId !== interaction.user.id) {
         return interaction.followUp({
-          content: "Only the server owner can delete tickets.",
+          content: "You do not have permission to delete this ticket.",
           ephemeral: true,
         }).catch(() => {});
       }
