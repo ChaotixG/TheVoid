@@ -17,15 +17,20 @@ module.exports = (existingCommand, localCommand) => {
     };
   
     const areOptionsDifferent = (existingOptions, localOptions) => {
+      // Check if they have different lengths
+      if ((existingOptions?.length || 0) !== (localOptions?.length || 0)) {
+        return true;
+      }
+
       for (const localOption of localOptions) {
         const existingOption = existingOptions?.find(
           (option) => option.name === localOption.name
         );
-  
+
         if (!existingOption) {
           return true;
         }
-  
+
         if (
           localOption.description !== existingOption.description ||
           localOption.type !== existingOption.type ||

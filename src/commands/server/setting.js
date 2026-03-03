@@ -20,8 +20,9 @@ const activeSessions = new Map(); // user.id → collector
 
 module.exports = {
   name: 'settings',
-  description: 'Configure server settings (voice hubs, tickets, etc.)',
+  description: 'Configure server settings',
   permissionsRequired: [PermissionFlagsBits.Administrator],
+  defaultMemberPermissions: PermissionFlagsBits.Administrator,
 
   callback: async (client, interaction) => {
     try {

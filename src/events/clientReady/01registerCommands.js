@@ -32,10 +32,13 @@ module.exports = async (client) => {
 
                 if (areCommandsDifferent(existingCommand, localCommand)) {
                     // Edit the existing command if it has changed
-                    await applicationCommands.edit(existingCommand.id, {
-                        description, // Fixed typo here
-                        options,
-                    });
+                    const editPayload = { description };
+                    if (localCommand.options) {
+                        editPayload.options = localCommand.options;
+                    } else {
+                        editPayload.options = [];
+                    }
+                    await applicationCommands.edit(existingCommand.id, editPayload);
                     warn(`Edited command "${name}".`);
                 }
             } else {
@@ -52,6 +55,15 @@ module.exports = async (client) => {
                     options,
                 });
                 info(`Registered command "${name}".`);
+            }
+        }
+
+        // Delete any application commands that don't exist locally
+        const localCommandNames = new Set(localCommands.map(cmd => cmd.name));
+        for (const appCommand of applicationCommands.cache.values()) {
+            if (!localCommandNames.has(appCommand.name)) {
+                await applicationCommands.delete(appCommand.id);
+                warn(`Deleted orphaned command "${appCommand.name}".`);
             }
         }
 
