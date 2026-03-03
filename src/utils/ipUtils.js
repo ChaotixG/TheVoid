@@ -22,11 +22,25 @@ function getPublicIP() {
 async function getCurrentAccessList() {
   const url = `https://cloud.mongodb.com/api/atlas/v1.0/groups/${process.env.MONGODB_PROJECT_ID}/accessList`;
   const res = await clientDigest.fetch(url);
-  const data = await res.json();
 
-  if (!data.results || !Array.isArray(data.results)) {
-    error("❌ Invalid API response:", data);
-    throw new Error("Atlas API response is missing `results`");
+  if (!res.ok) {
+    const errText = await res.text();
+    error(`❌ API request failed with status ${res.status}:`, errText);
+    throw new Error(`Atlas API returned ${res.status}: ${errText}`);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (parseErr) {
+    const bodyText = await res.text();
+    error("❌ Failed to parse API response as JSON:", bodyText);
+    throw new Error(`Failed to parse Atlas API response: ${parseErr.message}`);
+  }
+
+  if (!data || !data.results || !Array.isArray(data.results)) {
+    error("❌ Invalid API response structure:", data);
+    throw new Error("Atlas API response is missing `results` field");
   }
 
   return data.results.map(entry => entry.ipAddress);
@@ -38,10 +52,24 @@ async function getCurrentAccessList() {
 async function removeIPsByComment(commentToMatch) {
   const listUrl = `https://cloud.mongodb.com/api/atlas/v1.0/groups/${process.env.MONGODB_PROJECT_ID}/accessList`;
   const res = await clientDigest.fetch(listUrl);
-  const data = await res.json();
 
-  if (!Array.isArray(data.results)) {
-    throw new Error("Failed to fetch access list");
+  if (!res.ok) {
+    const errText = await res.text();
+    error(`❌ API request failed with status ${res.status}:`, errText);
+    throw new Error(`Atlas API returned ${res.status}: ${errText}`);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (parseErr) {
+    const bodyText = await res.text();
+    error("❌ Failed to parse API response as JSON:", bodyText);
+    throw new Error(`Failed to parse Atlas API response: ${parseErr.message}`);
+  }
+
+  if (!data || !Array.isArray(data.results)) {
+    throw new Error("Failed to fetch access list: response missing results");
   }
 
   const targets = data.results.filter(entry =>
@@ -87,6 +115,12 @@ async function addIPIfNeeded(ip) {
     headers: { 'Content-Type': 'application/json' },
     body: payload
   });
+
+  if (!res.ok && res.status !== 409) {
+    const resText = await res.text();
+    error(`❌ Failed to whitelist IP ${ip}: ${res.status} - ${resText}`);
+    throw new Error(`Failed to add IP to whitelist: ${res.status} ${resText}`);
+  }
 
   const resText = await res.text();
   if (res.status === 201 || res.status === 409) {
