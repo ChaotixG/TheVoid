@@ -28,14 +28,35 @@ const client = new Client({ intents: [
         });
 
         mongoose.set('strictQuery', false);
-        connection = await mongoose.connect(process.env.MONGODB_URI);
+
+        // --- Validate MongoDB URI ------------------------------------------------
+        if (!process.env.MONGODB_URI) {
+            throw new Error('MONGODB_URI environment variable is not defined');
+        }
+
+        // Trim whitespace/newlines that can accidentally break auth
+        let uri = process.env.MONGODB_URI.trim();
+        if (/\r|\n/.test(uri)) {
+            error('MongoDB URI contains newline characters; please check your .env file');
+            uri = uri.replace(/\r|\n/g, '');
+        }
+
+        // log username (hide password)
+        const credMatch = uri.match(/\/\/([^:]+):([^@]+)@/);
+        if (credMatch) {
+            log(`Connecting to MongoDB as user "${credMatch[1]}"`);
+        } else {
+            log('MongoDB URI does not include credentials');
+        }
+
+        connection = await mongoose.connect(uri);
         applyMongoIPGuard(connection);
         log('Connected to MongoDB!');
 
         eventHandler(client);
 
 
-        client.on('ready', () => log('Bot is online!'));
+        client.on('clientReady', () => log('Bot is online!'));
         await client.login(process.env.TOKEN);
         await rehydrateVoiceChannels(client); // 👈 Add this call
 
