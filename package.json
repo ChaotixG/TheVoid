@@ -31,5 +31,8 @@
     "mongodbMemoryServer": {
       "disablePostinstall": "1"
     }
+  },
+  "allowScripts": {
+    "mongodb-memory-server": false
   }
 }
