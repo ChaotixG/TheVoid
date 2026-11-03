@@ -211,13 +211,14 @@ test('shop: timed roles extend when bought again and are removed when they expir
     assert.equal(await RolePurchase.countDocuments(), 0);
 });
 
-test('shop: card themes can be bought once, equipped, and premium themes need premium', async () => {
-    const world = shopWorld({ balance: 600 });
+test('shop: card themes can be bought once and equipped, by anyone with the coins', async () => {
+    const world = shopWorld({ balance: 5600 });
     await world.setup();
     assert.match(await shop.buyTheme(world.interaction, 'midnight'), /unlocked and equipped/);
     assert.match(await shop.buyTheme(world.interaction, 'midnight'), /already own/);
+    assert.equal(await balanceOf('u1'), 5100);
+    assert.match(await shop.buyTheme(world.interaction, 'gold'), /unlocked and equipped/, 'no premium needed');
     assert.equal(await balanceOf('u1'), 100);
-    assert.match(await shop.buyTheme(world.interaction, 'gold'), /premium members/);
     assert.match(await shop.equipTheme(world.interaction, 'default'), /equipped/);
     assert.equal((await Wallet.findOne({ userId: 'u1' }).lean()).equippedTheme, 'default');
 });
