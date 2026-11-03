@@ -5,38 +5,13 @@ const { startDatabase, stopDatabase, clearDatabase } = require('./helpers');
 const Member = require('../src/models/Member');
 const Server = require('../src/models/Server');
 const TempVoiceChannel = require('../src/models/TempVoiceChannel');
-const daily = require('../src/commands/economy/daily');
 const { markGuildLeft, markGuildJoined, syncGuilds, purgeDepartedGuilds } = require('../src/database/guildLifecycle');
 
 before(startDatabase);
 after(stopDatabase);
 beforeEach(clearDatabase);
 
-function fakeCommand(userId = 'u1') {
-    const replies = [];
-    return { replies, interaction: {
-        guildId: 'g1', user: { id: userId },
-        deferReply: async () => {}, deleteReply: async () => {},
-        editReply: async (p) => replies.push(p), followUp: async (p) => replies.push(p),
-    } };
-}
 const noGuilds = { guilds: { cache: new Collection() } };
-
-test('/daily pays once per 24 hours, even when spammed', async () => {
-    const runs = Array.from({ length: 5 }, () => fakeCommand());
-    await Promise.all(runs.map(r => daily.callback(null, r.interaction)));
-
-    const member = await Member.findOne({ userId: 'u1' }).lean();
-    assert.equal(member.balance, 100);
-    const paid = runs.filter(r => typeof r.replies[0] === 'string').length;
-    assert.equal(paid, 1);
-    assert.match(runs.find(r => typeof r.replies[0] !== 'string').replies[0].content, /Come back <t:\d+:R>/);
-
-    // A day later it works again
-    await Member.updateOne({ userId: 'u1' }, { $set: { lastDaily: new Date(Date.now() - 25 * 3600_000) } });
-    await daily.callback(null, fakeCommand().interaction);
-    assert.equal((await Member.findOne({ userId: 'u1' }).lean()).balance, 200);
-});
 
 test('leaving a server keeps its data for 30 days; re-joining cancels the deletion', async () => {
     await Member.create({ guildId: 'g1', userId: 'u1', totalXp: 500 });

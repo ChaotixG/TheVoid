@@ -1,12 +1,13 @@
-// Shared test setup: an in-memory MongoDB plus small fakes for discord.js objects.
-const { MongoMemoryServer } = require('mongodb-memory-server');
+// Shared test setup: an in-memory MongoDB (a one-node replica set, like Atlas, so transactions
+// work) plus small fakes for discord.js objects.
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 const { Collection, PermissionsBitField } = require('discord.js');
 
 let mongo;
 
 async function startDatabase() {
-    mongo = await MongoMemoryServer.create();
+    mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongo.getUri());
     await Promise.all(Object.values(mongoose.models).map(m => m.init()));
 }
@@ -28,6 +29,7 @@ function fakeGuild({ id = 'g1', channels = [], roles = [], botPermissions = Perm
     return {
         id,
         name: 'Test Guild',
+        available: true,
         ownerId: 'owner',
         channels: { cache: channelCache },
         roles: { cache: roleCache },

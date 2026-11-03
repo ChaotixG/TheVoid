@@ -5,6 +5,7 @@ const { levelFromTotalXp, totalXpForLevel, levelProgress } = require('../src/uti
 const Server = require('../src/models/Server');
 const Member = require('../src/models/Member');
 const TempVoiceChannel = require('../src/models/TempVoiceChannel');
+const Wallet = require('../src/models/Wallet');
 const { runMigrations } = require('../src/database/migrations');
 
 before(startDatabase);
@@ -44,7 +45,8 @@ test('migration copies embedded users without changing anyone\'s level, and keep
     assert.equal(await Member.countDocuments(), 2);
     assert.deepEqual(levelProgress(a.totalXp), { level: 1, xpIntoLevel: 40, xpForNext: 100 });
     assert.deepEqual(levelProgress(b.totalXp), { level: 7, xpIntoLevel: 123, xpForNext: 700 });
-    assert.equal(a.balance, 5);
+    assert.equal(a.balance, undefined, 'coins moved out of the per-server record');
+    assert.equal((await Wallet.findOne({ userId: 'a' }).lean()).balance, 5, '...into the global wallet');
 
     const raw = await Server.collection.findOne({ guildId: 'g1' });
     assert.equal(raw.users, undefined);

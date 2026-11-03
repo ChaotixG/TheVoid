@@ -3,6 +3,9 @@ const canvacord = require('canvacord');
 const sharp = require('sharp');
 const Member = require('../../models/Member');
 const { levelProgress } = require('../../utils/leveling');
+const { getWallet } = require('../../services/wallet');
+const { isPremium } = require('../../services/premium');
+const { THEMES, CARD_THEMES_ENABLED } = require('../../config/economy');
 
 canvacord.Font.loadDefault(); // load the font once, not on every /rank
 
@@ -40,6 +43,8 @@ module.exports = {
         const { level, xpIntoLevel, xpForNext } = levelProgress(record.totalXp);
 
         const roleHex = `#${targetUserObj.displayColor.toString(16).padStart(6, '0')}`;
+        const theme = await cardTheme(client, user.id);
+        const accent = theme.accent ?? roleHex;
         const rank = new canvacord.RankCardBuilder()
         .setDisplayName(targetUserObj.displayName) // Big name (globalName is null for some users)
         .setUsername(targetUserObj.user.username) // small name, do not include it if you want to hide it
@@ -59,8 +64,8 @@ module.exports = {
         .setStyles({
             container: {
                 style: {
-                backgroundColor: '#23272b',   // your card background
-                border: `6px solid #484b51`,   // 6px thick border in your chosen color
+                backgroundColor: theme.background, // card background
+                border: `6px solid ${theme.border}`,  // 6px thick inner border
                 borderRadius: '16px',          // match or tweak your corner radius
                 padding: '8px'                // keep your inner spacing
                 }
@@ -79,27 +84,42 @@ module.exports = {
             progressbar: {
                 thumb: {
                     style: {
-                        backgroundColor: roleHex
+                        backgroundColor: accent
                     }
                 },
-                background: { style: { backgroundColor: "#2C2F33" } },
+                // The empty part of the bar ("track"); null keeps the library default
+                track: theme.track ? { style: { backgroundColor: theme.track } } : undefined,
                 border: { style: { backgroundColor: "#99AAB5" } }
             },
             username: {
                 handle: { style: { color: "#aaaaaa", fontSize: 14 } },
-                name: { style: { color: roleHex, fontSize: 34 } }
+                name: { style: { color: accent, fontSize: 34 } }
             },
             level: { style: { color: '#FFFFFF', fontSize: 24 } },
             rank: { style: { color: '#FFFFFF', fontSize: 24 } },
             xp: { style: { color: '#FFFFFF', fontSize: 18 } }
             })
 
+        // The area around the inner box: the card background plus the overlay drawn on top of it
+        if (theme.outer) rank.setBackground(theme.outer).setOverlay(theme.outer);
+
         const raw = await rank.build();
-        const final = await roundAndBorder(raw, roleHex, 24, 12) // Round corners and add border
+        const final = await roundAndBorder(raw, accent, 24, 12) // Round corners and add border
         const attachement = new AttachmentBuilder(final);
         await interaction.editReply({files: [attachement]});
     },
 };
+
+// The card theme the member equipped in /shop; the default look when themes are off,
+// or when a premium-only theme is equipped but premium has lapsed
+async function cardTheme(client, userId) {
+    const fallback = THEMES.find(t => t.id === 'default');
+    if (!CARD_THEMES_ENABLED) return fallback;
+    const { equippedTheme } = await getWallet(userId);
+    const theme = THEMES.find(t => t.id === equippedTheme) ?? fallback;
+    if (theme.premium && !await isPremium(client, userId)) return fallback;
+    return theme;
+}
 
 function getPresenceActivityColor(member) {
   // Define your presence‑status colors

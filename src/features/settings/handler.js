@@ -9,6 +9,7 @@ const {
     ModalBuilder,
     PermissionFlagsBits,
     RoleSelectMenuBuilder,
+    StringSelectMenuBuilder,
     TextInputBuilder,
     TextInputStyle,
 } = require('discord.js');
@@ -16,6 +17,7 @@ const { PAGES, WIZARD_STEPS, renderWizardStep, TICKET_CATEGORIES, ANNOUNCE_OPTIO
 const { getGuildSettings, updateGuildSettings } = require('../../services/guildSettings');
 const { panelPayload } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
+const { SHOP } = require('../../config/economy');
 
 const TOKEN_LIFETIME_MS = 15 * 60_000; // after this, a panel's interaction can no longer edit it
 const panels = new Map(); // `${guildId}:${userId}` → { messageId, interaction, at, step }
@@ -170,12 +172,13 @@ async function applyChange(interaction, area, action, arg) {
             return { page: 'moderation', notice: channelId ? `✅ Moderation actions will be logged in <#${channelId}>` : '✅ Logging turned off' };
         }
 
-        // ── Economy ──
-        case 'eco:dailymodal': {
-            const amount = parseWholeNumber(interaction.fields.getTextInputValue('amount'));
-            if (amount === null || amount < 1 || amount > 1_000_000) return { page: 'economy', notice: '⚠️ The daily reward must be a whole number from 1 to 1,000,000.' };
-            await save(interaction, { $set: { 'settings.economy.dailyAmount': amount } });
-            return { page: 'economy', notice: `✅ Daily reward set to ${amount.toLocaleString()} coins` };
+        // ── Economy (coin amounts are fixed in code; servers only choose what /shop sells) ──
+        case 'eco:addrolemodal':
+            return { page: 'economy', notice: await saveShopRole(interaction) };
+        case 'eco:removerole': {
+            const roleId = interaction.values[0];
+            await save(interaction, { $pull: { 'settings.economy.shopRoles': { roleId } } });
+            return { page: 'economy', notice: `✅ <@&${roleId}> removed from the shop. Members who bought it keep it (timed roles still expire).` };
         }
     }
     return { page: 'home' };
@@ -220,15 +223,48 @@ async function formFor(id, guildId) {
                     new RoleSelectMenuBuilder().setCustomId('role').setMinValues(1).setMaxValues(1)),
             );
     }
-    if (id === 'eco:daily') {
+    if (id === 'eco:addrole') {
         return new ModalBuilder()
-            .setCustomId('settings:eco:dailymodal')
-            .setTitle('Daily reward')
+            .setCustomId('settings:eco:addrolemodal')
+            .setTitle('Sell a role in the shop')
             .addLabelComponents(
-                new LabelBuilder().setLabel('Coins per daily claim').setDescription('1 to 1,000,000').setTextInputComponent(numberInput('amount', settings.economy.dailyAmount)),
+                new LabelBuilder().setLabel('Role').setDescription('Must be below my highest role').setRoleSelectMenuComponent(
+                    new RoleSelectMenuBuilder().setCustomId('role').setMinValues(1).setMaxValues(1)),
+                new LabelBuilder().setLabel('Price (coins)').setDescription(`1 to ${SHOP.maxPrice.toLocaleString()}`).setTextInputComponent(
+                    new TextInputBuilder().setCustomId('price').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10).setPlaceholder('e.g. 2500')),
+                new LabelBuilder().setLabel('How long buyers keep it').setStringSelectMenuComponent(
+                    new StringSelectMenuBuilder().setCustomId('duration').setMinValues(1).setMaxValues(1).addOptions(
+                        SHOP.durations.map(days => ({
+                            label: days ? `${days} day${days === 1 ? '' : 's'}` : 'Permanent',
+                            value: String(days),
+                            default: days === 0,
+                        })))),
             );
     }
     return null;
+}
+
+async function saveShopRole(interaction) {
+    const roleId = interaction.fields.getSelectedRoles('role', true).first().id;
+    const role = interaction.guild.roles.cache.get(roleId);
+    if (!role || role.id === interaction.guild.id) return '⚠️ Choose a regular role (not @everyone).';
+    if (role.managed) return `⚠️ <@&${roleId}> is managed by an integration and can't be sold.`;
+    if (!role.editable) return `⚠️ <@&${roleId}> is above my highest role. Move my role above it in Server Settings → Roles.`;
+
+    const price = parseWholeNumber(interaction.fields.getTextInputValue('price'));
+    if (price === null || price < 1 || price > SHOP.maxPrice) return `⚠️ The price must be a whole number from 1 to ${SHOP.maxPrice.toLocaleString()}.`;
+    const durationDays = Number(interaction.fields.getStringSelectValues('duration')[0] ?? 0);
+    if (!SHOP.durations.includes(durationDays)) return '⚠️ Choose how long buyers keep the role.';
+
+    // One entry per role (re-adding a role updates it); the cap is part of the write itself
+    await save(interaction, { $pull: { 'settings.economy.shopRoles': { roleId } } });
+    const saved = await updateGuildSettings(
+        interaction.guildId,
+        { $push: { 'settings.economy.shopRoles': { roleId, price, durationDays } } },
+        { [`settings.economy.shopRoles.${SHOP.maxRoles - 1}`]: { $exists: false } }
+    );
+    if (!saved) return `⚠️ The shop can hold up to ${SHOP.maxRoles} roles. Remove one first.`;
+    return `✅ <@&${roleId}> is for sale: ${price.toLocaleString()} coins, ${durationDays ? `${durationDays} day${durationDays === 1 ? '' : 's'}` : 'permanent'}`;
 }
 
 async function saveRate(interaction) {

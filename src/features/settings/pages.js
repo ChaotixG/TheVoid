@@ -8,6 +8,8 @@ const {
     StringSelectMenuBuilder,
 } = require('discord.js');
 const { separator, button, row, section, container, ButtonStyle } = require('../../utils/panels');
+const { coins } = require('../../utils/coins');
+const { DAILY, WEEKLY, CHAT, VOICE, PAY, SHOP } = require('../../config/economy');
 
 const ACCENT = 0x5865F2;
 
@@ -104,7 +106,7 @@ function summary(guild, s) {
             ? `On · ${lv.xpMin}–${lv.xpMax} XP every ${lv.cooldownSeconds}s · ${lv.levelRoles.length} level role${lv.levelRoles.length === 1 ? '' : 's'}`
             : 'Off'}`,
         moderation: `**🛡️ Moderation**\nLog channel: ${channelOrNone(guild, s.moderation.logChannelId)}`,
-        economy: `**💰 Economy**\nDaily reward: ${s.economy.dailyAmount.toLocaleString()} coins`,
+        economy: `**💰 Economy**\n${s.economy.shopRoles.length} role${s.economy.shopRoles.length === 1 ? '' : 's'} for sale in /shop`,
     };
 }
 
@@ -266,11 +268,30 @@ function moderation(guild, s, notice, footer = settingsFooter()) {
     ], ACCENT);
 }
 
+const durationLabel = (days) => (days ? `${days} day${days === 1 ? '' : 's'}` : 'permanent');
+
 function economy(guild, s, notice, footer = settingsFooter()) {
+    const items = s.economy.shopRoles.slice(0, SHOP.maxRoles);
+    const roleName = (id) => guild.roles.cache.get(id)?.name ?? 'deleted role';
+    const list = items.length
+        ? items.map(r => `<@&${r.roleId}> · ${coins(r.price)} · ${durationLabel(r.durationDays)}`).join('\n')
+        : 'Nothing for sale yet · add a role to open your shop.';
+    const remove = items.length ? new StringSelectMenuBuilder()
+        .setCustomId('settings:eco:removerole')
+        .setPlaceholder('Remove a role from the shop…')
+        .addOptions(items.map(r => ({ label: `@${roleName(r.roleId)} · ${r.price.toLocaleString()} coins`.slice(0, 100), value: r.roleId }))) : null;
+
     return container([
-        ...header('💰 Economy', 'Members claim a daily reward with **/daily** (once every 24 hours) and check their coins with **/balance**.', notice),
+        ...header('💰 Economy',
+            'Members earn coins by chatting, being active in voice, **/daily** and **/weekly**, and spend them in **/shop**. ' +
+            'Coin amounts are the same on every server, and each member has one wallet everywhere.', notice),
+        items.length ? missingPermissions(guild, [P.ManageRoles]) : null,
         separator(),
-        section(`**Daily reward** · ${s.economy.dailyAmount.toLocaleString()} coins`, button('settings:eco:daily', 'Edit')),
+        `**🛍️ Role shop** · what this server sells in **/shop**\n${list}`,
+        row(button('settings:eco:addrole', 'Add role', ButtonStyle.Success, { disabled: items.length >= SHOP.maxRoles })),
+        remove ? row(remove) : null,
+        `-# Fixed rates: /daily ${DAILY.base} (+${DAILY.streakBonus} per streak day, up to +${DAILY.maxStreakBonus}) · /weekly ${WEEKLY.amount.toLocaleString()} · ` +
+        `chat ${CHAT.min}–${CHAT.max} per minute · voice ${VOICE.amount} every ${VOICE.intervalMinutes} min while active · /pay tax ${PAY.taxPercent}%`,
         ...footer,
     ], ACCENT);
 }

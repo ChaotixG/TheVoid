@@ -17,9 +17,12 @@ const text = (content) => new TextDisplayBuilder().setContent(content);
 const separator = (divider = true) =>
     new SeparatorBuilder().setDivider(divider).setSpacing(SeparatorSpacingSize.Small);
 
+// `label` may be null for emoji-only buttons (game boards); a button needs a label or an emoji
 const button = (customId, label, style = ButtonStyle.Secondary, { disabled = false, emoji } = {}) => {
-    const b = new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style).setDisabled(disabled);
+    const b = new ButtonBuilder().setCustomId(customId).setStyle(style).setDisabled(disabled);
+    if (label) b.setLabel(label);
     if (emoji) b.setEmoji(emoji);
+    if (!label && !emoji) b.setLabel('​'); // blank square (e.g. an empty board cell)
     return b;
 };
 

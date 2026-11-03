@@ -46,8 +46,16 @@ const serverSchema = new Schema({
 		moderation: {
 			logChannelId: { type: String, default: null },
 		},
+		// Coin amounts are fixed in code (config/economy.js); servers only choose what /shop sells
 		economy: {
-			dailyAmount: { type: Number, default: 100, min: 1, max: 1_000_000 },
+			shopRoles: {
+				type: [new Schema({
+					roleId: { type: String, required: true },
+					price: { type: Number, required: true, min: 1, max: 10_000_000 },
+					durationDays: { type: Number, default: 0, min: 0, max: 365 }, // 0 = permanent
+				}, { _id: false })],
+				default: [],
+			},
 		},
 	},
 	// Set when the bot leaves the guild; data is deleted 30 days later unless the bot is re-added

@@ -4,6 +4,9 @@
 const Server = require('../models/Server');
 const Member = require('../models/Member');
 const TempVoiceChannel = require('../models/TempVoiceChannel');
+const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
+const RolePurchase = require('../models/RolePurchase');
 const { totalXpForLevel } = require('../utils/leveling');
 const { info } = require('../services/logger');
 
@@ -24,15 +27,18 @@ async function migrateEmbeddedUsers() {
             }
         }
 
+        const now = new Date();
         const ops = [...best].map(([userId, data]) => ({
             updateOne: {
                 filter: { guildId: server.guildId, userId },
-                update: { $setOnInsert: data }, // never overwrites a member that already exists
+                update: { $setOnInsert: { ...data, createdAt: now, updatedAt: now } }, // never overwrites a member that already exists
                 upsert: true,
             },
         }));
         if (ops.length) {
-            const result = await Member.bulkWrite(ops, { ordered: false });
+            // Raw collection on purpose: balance/lastDaily aren't Member fields any more (coins moved
+            // to the global Wallet) and Mongoose would strip them before migrateBalancesToWallets sums them
+            const result = await Member.collection.bulkWrite(ops, { ordered: false });
             copied += result.upsertedCount;
         }
         // If old code wrote a new `users` list after a previous migration, keep it under its own
@@ -98,13 +104,35 @@ async function migrateStaffRole() {
     if (servers.length) info(`Migration: moved the staff role to the staff role list for ${servers.length} servers`);
 }
 
+// Coins moved from per-server balances to one global wallet per user: add them up.
+// Each old per-server record is added to its owner's wallet exactly once (the wallet remembers
+// which records it absorbed), then cleared. This adds correctly even when the wallet already exists,
+// and a re-run or a crash between the two steps can't count anyone's coins twice.
+async function migrateBalancesToWallets() {
+    const records = await Member.collection
+        .find({ $or: [{ balance: { $exists: true } }, { lastDaily: { $exists: true } }] }, { projection: { userId: 1, balance: 1, lastDaily: 1 } })
+        .toArray();
+
+    for (const record of records) {
+        const amount = Math.max(0, Number(record.balance) || 0);
+        await Wallet.updateOne({ userId: record.userId }, { $setOnInsert: { balance: 0 } }, { upsert: true });
+        const update = { $inc: { balance: amount, earned: amount }, $push: { migratedFrom: record._id } };
+        // The latest claim carries over, so nobody gets a second /daily today
+        if (record.lastDaily instanceof Date) update.$max = { lastDaily: record.lastDaily };
+        await Wallet.collection.updateOne({ userId: record.userId, migratedFrom: { $ne: record._id } }, update);
+        await Member.collection.updateOne({ _id: record._id }, { $unset: { balance: '', lastDaily: '' } });
+    }
+    if (records.length) info(`Migration: moved coins from ${records.length} per-server records into global wallets`);
+}
+
 async function runMigrations() {
     // Build indexes first so the unique (guildId, userId) index guards the copy
-    await Promise.all([Server.init(), Member.init(), TempVoiceChannel.init()]);
+    await Promise.all([Server.init(), Member.init(), TempVoiceChannel.init(), Wallet.init(), Transaction.init(), RolePurchase.init()]);
     await migrateEmbeddedUsers();
     await migrateVoiceHubs();
     await migrateTempVoiceChannels();
     await migrateStaffRole();
+    await migrateBalancesToWallets();
 }
 
 module.exports = { runMigrations };

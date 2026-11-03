@@ -1,39 +1,33 @@
 const { ApplicationIntegrationType, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
-const Member = require('../../models/Member');
-const { getGuildSettings } = require('../../services/guildSettings');
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+const { claimDaily } = require('../../features/economy/rewards');
+const { DAILY } = require('../../config/economy');
+const { coins } = require('../../utils/coins');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('daily')
-        .setDescription('Claim your daily coins (once every 24 hours)')
+        .setDescription('Claim your daily coins (once every 24 hours; keep a streak for a bonus)')
         .setContexts(InteractionContextType.Guild)
         .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     callback: async (client, interaction) => {
         await interaction.deferReply(); // the database work below may take a moment
-        const guildId = interaction.guildId;
-        const userId = interaction.user.id;
-        const { economy } = await getGuildSettings(guildId);
-        const now = new Date();
+        const result = await claimDaily(client, interaction.user.id, interaction.guildId);
 
-        await Member.updateOne({ guildId, userId }, { $setOnInsert: { lastDaily: null } }, { upsert: true });
-        // Only succeeds if the last claim was 24+ hours ago, so double-clicks can't claim twice
-        const claimed = await Member.findOneAndUpdate(
-            { guildId, userId, $or: [{ lastDaily: null }, { lastDaily: { $lte: new Date(now.getTime() - DAY_MS) } }] },
-            { $inc: { balance: economy.dailyAmount }, $set: { lastDaily: now } },
-            { returnDocument: 'after', projection: { balance: 1 } }
-        ).lean();
-
-        if (!claimed) {
-            const member = await Member.findOne({ guildId, userId }, { lastDaily: 1 }).lean();
-            const next = Math.ceil((member.lastDaily.getTime() + DAY_MS) / 1000);
+        if (!result.claimed) {
             // Keep "come back later" private: drop the public placeholder and answer privately
             await interaction.deleteReply().catch(() => {});
-            return interaction.followUp({ content: `⏳ You already claimed today's reward. Come back <t:${next}:R>.`, flags: MessageFlags.Ephemeral });
+            return interaction.followUp({
+                content: `⏳ You already claimed today's reward. Come back <t:${Math.ceil(result.nextAt / 1000)}:R>.`,
+                flags: MessageFlags.Ephemeral,
+            });
         }
 
-        await interaction.editReply(`💰 You claimed **${economy.dailyAmount.toLocaleString()}** coins! You now have **${claimed.balance.toLocaleString()}**.`);
+        const streak = result.wallet.dailyStreak;
+        const nextBonus = Math.min(streak * DAILY.streakBonus, DAILY.maxStreakBonus);
+        await interaction.editReply([
+            `💰 You claimed ${coins(result.amount)} coins!${result.premium ? ' (premium ×2)' : ''} You now have ${coins(result.wallet.balance)}.`,
+            `🔥 Streak: **${streak} day${streak === 1 ? '' : 's'}** · tomorrow's bonus: +${nextBonus}. Claim within 48 hours to keep it.`,
+        ].join('\n'));
     },
 };

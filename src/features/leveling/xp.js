@@ -1,12 +1,16 @@
-// Message XP, level-up announcements and level roles.
+// XP from chatting and voice activity, level-up announcements and level roles.
+// XP is per server (each server's leveling settings); coins go to the global wallet.
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { randomInt } = require('crypto');
 const Member = require('../../models/Member');
 const { getGuildSettings } = require('../../services/guildSettings');
+const { isPremium } = require('../../services/premium');
+const { grantChatCoins } = require('../economy/rewards');
 const { levelFromTotalXp } = require('../../utils/leveling');
+const { PREMIUM } = require('../../config/economy');
 const { warn } = require('../../services/logger');
 
-const cooldowns = new Map(); // `${guildId}:${userId}` → time (ms) when XP can be earned again
+const cooldowns = new Map(); // `${guildId}:${userId}` → time (ms) when chat XP can be earned again
 
 // Drop expired cooldowns now and then so the map doesn't grow forever
 setInterval(() => {
@@ -14,41 +18,76 @@ setInterval(() => {
     for (const [key, until] of cooldowns) if (until <= now) cooldowns.delete(key);
 }, 10 * 60_000).unref();
 
+// No-earn list may contain the channel, its parent channel (for threads) or its category
+function earnsInChannel(channel, leveling) {
+    const scope = [channel.id, channel.parentId, channel.parent?.parentId];
+    return !scope.some(id => id && leveling.noXpChannelIds.includes(id));
+}
+
+async function rollXp(client, userId, leveling) {
+    const min = Math.min(leveling.xpMin, leveling.xpMax);
+    const max = Math.max(leveling.xpMin, leveling.xpMax);
+    const premium = await isPremium(client, userId);
+    return Math.round(randomInt(min, max + 1) * (premium ? PREMIUM.xpMultiplier : 1));
+}
+
 /** @param {import('discord.js').Message} message */
 async function grantMessageXp(message) {
     const guildId = message.guildId;
     const userId = message.author.id;
     const { leveling } = await getGuildSettings(guildId);
+    if (!earnsInChannel(message.channel, leveling)) return;
+
+    // Coins are global and have their own (global) cooldown
+    await grantChatCoins(message.client, userId);
+
     if (!leveling.enabled) return;
-
-    // No-XP list may contain the channel, its parent channel (for threads) or its category
-    const channel = message.channel;
-    const scope = [channel.id, channel.parentId, channel.parent?.parentId];
-    if (scope.some(id => id && leveling.noXpChannelIds.includes(id))) return;
-
     const key = `${guildId}:${userId}`;
     const now = Date.now();
     if ((cooldowns.get(key) ?? 0) > now) return;
     cooldowns.set(key, now + leveling.cooldownSeconds * 1000);
 
-    const min = Math.min(leveling.xpMin, leveling.xpMax);
-    const max = Math.max(leveling.xpMin, leveling.xpMax);
-    const gain = randomInt(min, max + 1);
+    await addXp({
+        guild: message.guild,
+        userId,
+        member: message.member ?? await message.guild.members.fetch(userId).catch(() => null),
+        amount: await rollXp(message.client, userId, leveling),
+        leveling,
+        reply: (payload) => message.reply(payload),
+    });
+}
 
-    // Atomic increment; creates the member on their first message
-    const member = await Member.findOneAndUpdate(
-        { guildId, userId },
-        { $inc: { totalXp: gain } },
+/** XP for one voice-activity interval; `channel` is the voice channel they're active in. */
+async function grantVoiceXp(member, channel) {
+    const { leveling } = await getGuildSettings(member.guild.id);
+    if (!leveling.enabled || !earnsInChannel(channel, leveling)) return;
+    await addXp({
+        guild: member.guild,
+        userId: member.id,
+        member,
+        amount: await rollXp(member.client, member.id, leveling),
+        leveling,
+        here: channel, // a voice channel's text chat
+    });
+}
+
+/**
+ * Adds XP atomically. Because the level is derived from total XP, exactly one gain ever crosses
+ * each threshold, so a level-up is announced once even with chat and voice at the same time.
+ */
+async function addXp({ guild, userId, member, amount, leveling, reply = null, here = null }) {
+    const record = await Member.findOneAndUpdate(
+        { guildId: guild.id, userId },
+        { $inc: { totalXp: amount } },
         { upsert: true, returnDocument: 'after', projection: { totalXp: 1 } }
     ).lean();
 
-    // Level is derived from total XP, so exactly one message ever crosses each threshold
-    const newLevel = levelFromTotalXp(member.totalXp);
-    if (newLevel <= levelFromTotalXp(member.totalXp - gain)) return;
+    const newLevel = levelFromTotalXp(record.totalXp);
+    if (newLevel <= levelFromTotalXp(record.totalXp - amount)) return null;
 
-    const guildMember = message.member ?? await message.guild.members.fetch(userId).catch(() => null);
-    const newRoleIds = await applyLevelRoles(guildMember, newLevel, leveling);
-    await announceLevelUp(message, newLevel, newRoleIds, leveling);
+    const newRoleIds = await applyLevelRoles(member, newLevel, leveling);
+    await announceLevelUp({ guild, userId, level: newLevel, newRoleIds, leveling, reply, here });
+    return newLevel;
 }
 
 /**
@@ -84,31 +123,24 @@ async function applyLevelRoles(member, level, leveling) {
     return toAdd;
 }
 
-async function announceLevelUp(message, level, newRoleIds, leveling) {
+// Announces in the level-up channel if one is set; otherwise replies to the message (chat)
+// or posts in the voice channel's chat (voice)
+async function announceLevelUp({ guild, userId, level, newRoleIds, leveling, reply, here }) {
     if (leveling.announce === 'off') return;
 
-    let text = `<@${message.author.id}> reached **level ${level}**!`;
+    let text = `<@${userId}> reached **level ${level}**!`;
     if (newRoleIds.length) text += `\nNew role: ${newRoleIds.map(id => `<@&${id}>`).join(', ')}`;
-
-    const embed = new EmbedBuilder()
-        .setColor('#5a4786')
-        .setTitle('Level Up!')
-        .setDescription(text);
+    const embed = new EmbedBuilder().setColor('#5a4786').setTitle('Level Up!').setDescription(text);
+    const mention = { content: `<@${userId}>`, embeds: [embed], allowedMentions: { users: [userId] } };
 
     try {
-        const target = leveling.announce === 'channel'
-            ? message.guild.channels.cache.get(leveling.announceChannelId)
-            : null;
-
-        if (target?.isTextBased()) {
-            await target.send({ content: `<@${message.author.id}>`, embeds: [embed], allowedMentions: { users: [message.author.id] } });
-        } else {
-            // 'same', or the configured channel no longer exists
-            await message.reply({ embeds: [embed], allowedMentions: { repliedUser: true } });
-        }
+        const target = leveling.announce === 'channel' ? guild.channels.cache.get(leveling.announceChannelId) : null;
+        if (target?.isTextBased()) await target.send(mention);
+        else if (reply) await reply({ embeds: [embed], allowedMentions: { repliedUser: true } });
+        else if (here?.isTextBased()) await here.send(mention);
     } catch (err) {
-        warn(`Could not announce level-up in guild ${message.guildId}: ${err.message}`);
+        warn(`Could not announce level-up in guild ${guild.id}: ${err.message}`);
     }
 }
 
-module.exports = { grantMessageXp, applyLevelRoles };
+module.exports = { grantMessageXp, grantVoiceXp, addXp, applyLevelRoles };
