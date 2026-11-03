@@ -1,7 +1,6 @@
 const { TextInputStyle } = require('discord.js');
 
 module.exports = {
-    customId: 'ticket_suggestion',
     title: 'Submit a Suggestion',
     inputs: [
         {
@@ -9,6 +8,7 @@ module.exports = {
             customId: 'title',                    // ← standardized
             label: 'Title for your suggestion',
             style: TextInputStyle.Short,
+            maxLength: 100,                       // thread name limit
             placeholder: 'Explain your suggestion in a few words...',
             required: true
         },

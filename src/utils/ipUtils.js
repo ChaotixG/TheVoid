@@ -13,7 +13,10 @@ function getPublicIP() {
       .get('https://api.ipify.org?format=json', r => {
         let d = '';
         r.on('data', c => (d += c));
-        r.on('end', () => res(JSON.parse(d).ip));
+        r.on('end', () => {
+          // A non-JSON reply (outage page) must reject, not throw inside the event handler
+          try { res(JSON.parse(d).ip); } catch (err) { rej(err); }
+        });
       })
       .on('error', rej)
   );
@@ -116,19 +119,22 @@ async function addIPIfNeeded(ip) {
     body: payload
   });
 
+  const resText = await res.text();
   if (!res.ok && res.status !== 409) {
-    const resText = await res.text();
+    // 401/403 here usually means the API key lacks the "Project IP Access List Admin" role,
+    // or the key itself only accepts requests from IPs on its own API access list
     error(`❌ Failed to whitelist IP ${ip}: ${res.status} - ${resText}`);
     throw new Error(`Failed to add IP to whitelist: ${res.status} ${resText}`);
   }
 
-  const resText = await res.text();
-  if (res.status === 201 || res.status === 409) {
-    log(`IP ${ip} added to whitelist`);
-  } else {
-    error(`Failed to whitelist IP ${ip}: ${res.status}`, resText);
-    throw new Error(resText);
+  // A 2xx/409 response doesn't guarantee the entry exists, so confirm before reporting success
+  const updatedList = await getCurrentAccessList();
+  if (!updatedList.includes(ip)) {
+    error(`❌ Atlas answered ${res.status} but IP ${ip} is not on the access list. Response:`, resText);
+    throw new Error(`IP ${ip} was not added to the access list (Atlas status ${res.status})`);
   }
+
+  log(`IP ${ip} added to whitelist (Atlas status ${res.status})`);
 }
 
 module.exports = {

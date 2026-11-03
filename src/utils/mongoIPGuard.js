@@ -12,6 +12,8 @@ let lastIP = null;
 async function refreshIPIfRejected(err) {
   // now catches TLS handshake alerts as well
   const ipError =
+    // mongoose's wording when Atlas refuses the connection: "...an IP that isn't whitelisted..."
+    err.message.includes("isn't whitelisted") ||
     err.message.includes("access is not allowed") ||
     err.message.includes("not authorized") ||
     err.message.includes("ECONNREFUSED") ||
@@ -40,8 +42,9 @@ async function refreshIPIfRejected(err) {
 /**
  * Applies automatic IP handling to MongoDB connection + query methods.
  */
-function applyMongoIPGuard(originalConnect) {
-  // Patch mongoose.connect()
+function applyMongoIPGuard() {
+  // Patch mongoose.connect() (call this before connecting)
+  const originalConnect = mongoose.connect;
   mongoose.connect = async function (...args) {
     try {
       return await originalConnect.apply(this, args);
@@ -59,7 +62,7 @@ function applyMongoIPGuard(originalConnect) {
       return await exec.apply(this, args);
     } catch (err) {
       const fixed = await refreshIPIfRejected(err);
-      if (fixed) return exec.apply(this, args); // Retry after IP fix
+      if (fixed) return exec.apply(this.clone(), args); // Retry after IP fix (a query can only run once, so retry a copy)
       throw err;
     }
   };

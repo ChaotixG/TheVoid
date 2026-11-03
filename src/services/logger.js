@@ -1,48 +1,29 @@
-const DEBUG_MODE = true;
+// Console logger with levels. Set LOG_LEVEL=debug in .env to see debug output.
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+const minLevel = LEVELS[(process.env.LOG_LEVEL || 'info').toLowerCase()] ?? LEVELS.info;
 
 const COLORS = {
     reset: "\x1b[0m",
-    info: "\x1b[34m", // Blue
-    warn: "\x1b[33m", // Yellow
+    debug: "\x1b[90m", // Gray
+    info: "\x1b[34m",  // Blue
+    warn: "\x1b[33m",  // Yellow
     error: "\x1b[31m", // Red
 };
 
-const log = (level, message, error = null) => {
-    let levelColor = COLORS.reset;
-    let messageColor = COLORS.reset;
-
-    // Handle the error case separately to avoid recursion
-    if (level === "error" && error) {
-        levelColor = COLORS.error;
-        messageColor = COLORS.error;
-        console.error(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}- ${message}\n`, error.stack, COLORS.reset);
-    } else if (DEBUG_MODE) {
-        switch (level.toLowerCase()) {
-            case 'info':
-                levelColor = COLORS.info;
-                messageColor = COLORS.info;
-                console.log(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}- ${message}${COLORS.reset}`);
-                break;
-            case 'warn':
-                levelColor = COLORS.warn;
-                messageColor = COLORS.warn;
-                console.warn(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}- ${message}${COLORS.reset}`);
-                break;
-            case 'error':
-                levelColor = COLORS.error;
-                messageColor = COLORS.error;
-                console.error(`${levelColor}[${level.toUpperCase()}]${COLORS.reset} ${messageColor}- ${message}${COLORS.reset}`);
-                break;
-            default:
-                // Default to console.log for any unknown levels
-                console.log(`${levelColor}[${level}]${COLORS.reset} ${messageColor}`/*- ${message}${COLORS.reset}`*/);
-                break;
-        }
-    }
+const write = (level, message, details) => {
+    if (LEVELS[level] < minLevel) return;
+    const time = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const line = `${COLORS[level]}${time} [${level.toUpperCase()}]${COLORS.reset} ${message}`;
+    const out = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+    // Details may be an Error or plain data (e.g. an API response body); print whichever it is
+    if (details !== undefined && details !== null) out(line, '\n', details?.stack ?? details);
+    else out(line);
 };
 
-const info = (message) => log('info', message);
-const warn = (message) => log('warn', message);
-const error = (message, error) => log('error', message, error);
+const debug = (message, details) => write('debug', message, details);
+const info = (message, details) => write('info', message, details);
+const log = info;
+const warn = (message, details) => write('warn', message, details);
+const error = (message, details) => write('error', message, details);
 
-module.exports = { log, info, warn, error };
+module.exports = { log, debug, info, warn, error };

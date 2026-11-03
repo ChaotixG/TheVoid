@@ -1,21 +1,14 @@
 const path = require('path');
 const getAllFiles = require('./getAllFiles');
 
-module.exports = (exceptions = []) => {
-    let localCommands = [];
-    // Get all files from the 'commands' directory, excluding folders
-    const localCommandsFolders = getAllFiles(
-        path.join(__dirname, '..', 'commands'), true, false
-    );
-    const localCommandFiles = getAllFiles(
-        path.join(__dirname, '..', 'commands'), false, true,
-    );
-    for (const commandFile of localCommandFiles){
-        const commandObject = require (commandFile);
-        if( exceptions.includes(commandObject.name)){
-            continue;
+// Every file under src/commands exports { data: SlashCommandBuilder, callback, botPermissions? }
+module.exports = () => {
+    const commandFiles = getAllFiles(path.join(__dirname, '..', 'commands'), false, true);
+    return commandFiles.map(file => {
+        const command = require(file);
+        if (!command.data || typeof command.callback !== 'function') {
+            throw new Error(`Command file ${path.relative(process.cwd(), file)} must export { data, callback }`);
         }
-        localCommands.push(commandObject)
-    }
-    return localCommands;
+        return command;
+    });
 };

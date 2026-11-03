@@ -1,9 +1,10 @@
 const path = require('path');
 const getAllFiles = require('../utils/getAllFiles');
-const { info, warn, error } = require("../services/logger")
+const { debug, warn, error } = require("../services/logger")
 
+// Every file in events/<eventName>/ is registered as a listener for <eventName>.
+// Files run in name order (prefix with 01, 02... when order matters).
 module.exports = (client) => {
-    // Get all event folders
     const eventFolders = getAllFiles(path.join(__dirname, '..', 'events'), true);
 
     if (!eventFolders.length) {
@@ -11,61 +12,20 @@ module.exports = (client) => {
         return;
     }
 
-    // Interaction handlers for interactionCreate
-    const interactionHandlers = {};
-
-    // Loop through all event folders
-    eventFolders.forEach(eventFolder => {
+    for (const eventFolder of eventFolders) {
         const eventName = path.basename(eventFolder); // Event name from folder name
+        const eventFiles = getAllFiles(eventFolder, false, true).sort();
 
-        if (eventName === 'interactionCreate') {
-            // Collect all interaction handlers
-            const handlers = getAllFiles(eventFolder, false, true, true);
-            handlers.forEach(handlerFile => {
-                const handler = require(handlerFile);
-                const handlerName = path.basename(handlerFile, '.js'); // Use file name as handler name
-                interactionHandlers[handlerName] = handler;
-            });
-        } else {
-            // Default handling for other events
-            const eventFiles = getAllFiles(eventFolder, false, true, true);
-
-            eventFiles.forEach(eventFile => {
-                info(`Registering event: ${eventName} from file: ${eventFile}`);
+        for (const eventFile of eventFiles) {
+            debug(`Registering event: ${eventName} from file: ${path.basename(eventFile)}`);
+            const eventFunction = require(eventFile);
+            client.on(eventName, async (...args) => {
                 try {
-                    const eventFunction = require(eventFile);
-                    client.on(eventName, async (...args) => {
-                        await eventFunction(client, ...args); // Execute the event
-                    });
+                    await eventFunction(client, ...args); // Execute the event
                 } catch (err) {
-                    error(`Error registering event ${eventName} from file ${eventFile}: `, err);
+                    error(`Error in ${eventName} handler ${path.basename(eventFile)}: `, err);
                 }
             });
         }
-    });
-
-    // Register interactionCreate event once
-    client.on('interactionCreate', async (interaction) => {
-        try {
-            if (interaction.isChatInputCommand()) {
-                if (interactionHandlers.handleCommands) {
-                    interactionHandlers.handleCommands(client, interaction);
-                }
-            } else if (interaction.isStringSelectMenu()) {
-                if (interactionHandlers.handleTickets) {
-                    interactionHandlers.handleTickets(client, interaction);
-                }
-            } else if (interaction.isButton()) {
-                if (interactionHandlers.handleButtons) {
-                    await interactionHandlers.handleButtons(client, interaction);
-                }
-            } else if (interaction.isModalSubmit()) {
-                if (interactionHandlers.handleModals) {
-                    await interactionHandlers.handleModals(client, interaction);
-                }
-            } 
-        } catch (err) {
-            error('Error handling interaction: ', err);
-        }
-    });
+    }
 };
