@@ -330,46 +330,244 @@ test('voice: stage listeners (who can\x27t speak) don\x27t count as active', () 
     assert.equal(isActiveInVoice(speaker), true);
 });
 
-// ─── Premium custom card colors ───────────────────────────────
-const { normalizeHex, customTheme, resolveCardTheme, renderRankCard } = require('../src/features/leveling/rankCard');
+// ─── Premium custom card theme ────────────────────────────────
+const sharp = require('sharp');
+const CardImage = require('../src/models/CardImage');
+const { normalizeHex, customTheme, resolveCardTheme, renderRankCard, cardForMember } = require('../src/features/leveling/rankCard');
+const { inspectPanel } = require('./helpers');
 
-test('custom colors: hex codes are normalized, junk is refused, light backgrounds get dark text', () => {
+const red = '#ff0000';
+const blue = '#0000ff';
+
+async function testMember(id = 'u1') {
+    const avatar = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#7289da' } }).png().toBuffer();
+    return { id, displayColor: 0, displayName: 'Tester', presence: null, user: { username: 'tester', displayAvatarURL: () => 'data:image/png;base64,' + avatar.toString('base64') } };
+}
+
+// Reads pixels of a rendered card: pixel(x, y) → [r, g, b]
+async function pixels(png) {
+    const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    return (x, y) => { const i = (y * info.width + x) * info.channels; return [data[i], data[i + 1], data[i + 2]]; };
+}
+const isRed = ([r, , b]) => r > 180 && b < 75;
+const isBlue = ([r, , b]) => b > 180 && r < 75;
+
+// A world where u1 is premium with plenty of coins
+async function customWorld(balance = 20_000) {
+    const world = shopWorld({ balance });
+    await world.setup();
+    world.interaction.client = premiumClient(['u1']);
+    return world;
+}
+const customOf = async () => (await Wallet.findOne({ userId: 'u1' }).lean()).customTheme;
+
+test('custom theme: hex codes are normalized; parts become solid colors or gradients with a direction', () => {
     assert.equal(normalizeHex('#F80'), '#ff8800');
     assert.equal(normalizeHex('1a1a2e'), '#1a1a2e');
     assert.equal(normalizeHex('zzz'), null);
     assert.equal(normalizeHex('#12345'), null);
-    assert.equal(customTheme({ background: '#f5f5f5', accent: '#3f51b5' }).light, true);
-    const dark = customTheme({ background: '#2b5876', background2: '#4e4376', accent: '#f7971e', accent2: '#ffd200' });
-    assert.equal(dark.light, false);
-    assert.deepEqual(dark.outerGradient, ['#2b5876', '#4e4376']);
-    assert.deepEqual(dark.accentGradient, ['#f7971e', '#ffd200']);
+
+    const theme = customTheme({
+        background: { mode: 'gradient', color: red, color2: blue, direction: 'bltr' },
+        inner: { mode: 'solid', color: '#f5f5f5', color2: blue }, // solid ignores the second color
+        outline: { mode: 'gradient', color: red, color2: blue, direction: 'nonsense' },
+    });
+    assert.deepEqual(theme.outerGradient, { colors: [red, blue], direction: 'bltr' });
+    assert.equal(theme.innerGradient, null);
+    assert.equal(theme.light, true, 'a light inner card gets dark text');
+    assert.deepEqual(theme.borderGradient, { colors: [red, blue], direction: 'lr' }, 'an unknown direction falls back to left → right');
+    assert.equal(theme.accent, red, 'the name follows the outline');
+    assert.equal(customTheme({}).outer, economyConfig.CUSTOM_THEME.defaults.background);
 });
 
-test('custom colors: premium only; saved colors are equipped and used on the card', async () => {
-    const formFields = (values) => ({ getTextInputValue: (id) => values[id] ?? '' });
-    const world = shopWorld({ balance: 0 });
-    await world.setup();
-    const save = (client, values) => shop.saveCustomColors({ ...world.interaction, client, fields: formFields(values) });
+test('custom theme: premium + 10,000 coins; extra directions cost 2,500 each and work for every part', async () => {
+    const world = await customWorld();
+    const { interaction } = world;
 
-    assert.match((await save(noClient, { background: '#112233', accent: '#ff0000' })).notice, /premium members/);
-    const client = premiumClient(['u1']);
-    assert.match((await save(client, { background: 'oops', accent: '#ff0000' })).notice, /isn't a hex color/);
-    assert.equal((await save(client, { background: '123', background2: '#445566', accent: 'F00' })).saved, true);
+    assert.match(await shop.buyCustomTheme({ ...interaction, client: noClient }), /premium members/);
+    forgetPremium('u1'); // premium answers are cached
+    assert.match(await shop.buyCustomTheme(interaction), /unlocked and equipped/);
+    assert.match(await shop.buyCustomTheme(interaction), /already own/);
+    assert.equal(await balanceOf('u1'), 10_000);
+    let custom = await customOf();
+    assert.equal(custom.owned, true);
+    assert.deepEqual(custom.directions, ['lr'], 'left → right comes with the theme');
+    assert.equal((await Wallet.findOne({ userId: 'u1' }).lean()).equippedTheme, 'custom');
 
-    const wallet = await Wallet.findOne({ userId: 'u1' }).lean();
-    assert.equal(wallet.equippedTheme, 'custom');
-    assert.deepEqual(wallet.customTheme, { background: '#112233', background2: '#445566', accent: '#ff0000', accent2: null });
-    assert.equal((await resolveCardTheme(client, 'u1')).id, 'custom');
+    assert.match(await shop.setDirection(interaction, 'outline', 'bt'), /Unlock that direction first/);
+    assert.match(await shop.unlockDirection(interaction, 'lr', 'outline'), /Unknown direction/, 'the free one isn\'t sold');
+    assert.match(await shop.unlockDirection(interaction, 'bt', 'outline'), /unlocked/);
+    assert.match(await shop.unlockDirection(interaction, 'bt', 'outline'), /already have/);
+    assert.equal(await balanceOf('u1'), 7_500);
+    custom = await customOf();
+    assert.deepEqual(custom.directions, ['lr', 'bt']);
+    assert.equal(custom.outline.direction, 'bt', 'applied to the gradient being edited');
+
+    // The same direction works for another part
+    assert.match(await shop.setPartMode(interaction, 'background', 'gradient'), /gradient/);
+    assert.match(await shop.setDirection(interaction, 'background', 'bt'), /Background gradient/);
+    custom = await customOf();
+    assert.equal(custom.background.mode, 'gradient');
+    assert.ok(normalizeHex(custom.background.color2), 'a new gradient gets a starting second color');
+    assert.equal(custom.background.direction, 'bt');
+    assert.match(await shop.setPartMode(interaction, 'inner', 'image'), /Unknown option/, 'only the background can be a picture');
+
+    await Wallet.updateOne({ userId: 'u1' }, { $set: { balance: 100 } });
+    assert.match(await shop.unlockDirection(interaction, 'tlbr', 'outline'), /enough coins/);
+    assert.equal(await Transaction.countDocuments({ userId: 'u1', type: 'shop_theme' }), 2);
+
+    // Used on /rank only while premium lasts
+    await shop.setPartMode(interaction, 'outline', 'gradient');
+    const theme = await resolveCardTheme(interaction.client, 'u1');
+    assert.equal(theme.id, 'custom');
+    assert.equal(theme.borderGradient.direction, 'bt');
     forgetPremium('u1');
     assert.equal((await resolveCardTheme(noClient, 'u1')).id, 'default', 'premium lapsed: back to the default card');
 });
 
-test('custom colors: a gradient card renders', async () => {
-    const sharp = require('sharp');
-    const avatar = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#7289da' } }).png().toBuffer();
-    const member = { displayColor: 0, displayName: 'Tester', user: { username: 'tester', displayAvatarURL: () => 'data:image/png;base64,' + avatar.toString('base64') }, presence: null };
-    const card = await renderRankCard({ member, level: 3, xpIntoLevel: 50, xpForNext: 300, position: 2, theme: customTheme({ background: '#2b5876', background2: '#4e4376', accent: '#f7971e', accent2: '#ffd200' }) });
-    const meta = await sharp(card).metadata();
-    assert.equal(meta.format, 'png');
+test('custom theme: works for wallets saved with the old custom-colors fields', async () => {
+    await Wallet.collection.insertOne({ userId: 'u1', balance: 20_000, customTheme: { background: null, background2: null, accent: null, accent2: null } });
+    const interaction = { ...shopWorld().interaction, client: premiumClient(['u1']) };
+    assert.equal((await resolveCardTheme(interaction.client, 'u1')).id, 'default');
+    assert.match(await shop.buyCustomTheme(interaction), /unlocked and equipped/);
+    assert.match(await shop.setPartMode(interaction, 'outline', 'gradient'), /gradient/);
+    assert.equal((await customOf()).outline.mode, 'gradient');
+});
+
+test('custom theme: colors are checked and saved for one part at a time', async () => {
+    const world = await customWorld();
+    const save = (part, form, values) => shop.saveCustomColors({ ...world.interaction, fields: { getTextInputValue: (id) => values[id] ?? '' } }, part, form);
+
+    assert.match((await save('inner', 'solid', { color: '#123456' })).notice, /Buy the custom theme first/);
+    await shop.buyCustomTheme(world.interaction);
+    assert.match((await save('inner', 'solid', { color: 'oops' })).notice, /isn't a hex color/);
+    assert.match((await save('outline', 'gradient', { color: '#f80', color2: 'nope' })).notice, /isn't a hex color/);
+    assert.equal((await save('outline', 'gradient', { color: '#f80', color2: '8E2DE2' })).saved, true);
+    assert.equal((await save('inner', 'solid', { color: 'fff' })).saved, true);
+
+    const custom = await customOf();
+    assert.equal(custom.outline.color, '#ff8800');
+    assert.equal(custom.outline.color2, '#8e2de2');
+    assert.equal(custom.inner.color, '#ffffff');
+    assert.equal(custom.background.color, economyConfig.CUSTOM_THEME.defaults.background, 'other parts untouched');
+});
+
+test('custom theme: gradients run in the chosen direction; the bar always runs left to right', async () => {
+    const member = await testMember();
+    const draw = async (theme) => pixels(await renderRankCard({ member, level: 3, xpIntoLevel: 290, xpForNext: 300, position: 2, theme }));
+
+    // Background, just inside the frame
+    const bottomToTop = await draw(customTheme({ background: { mode: 'gradient', color: red, color2: blue, direction: 'bt' } }));
+    assert.ok(isRed(bottomToTop(40, 283)) && isRed(bottomToTop(913, 283)), 'starts at the bottom');
+    assert.ok(isBlue(bottomToTop(40, 20)) && isBlue(bottomToTop(913, 20)), 'ends at the top');
+    const diagonal = await draw(customTheme({ background: { mode: 'gradient', color: red, color2: blue, direction: 'tlbr' } }));
+    assert.ok(isRed(diagonal(40, 20)) && isBlue(diagonal(913, 283)), 'top-left to bottom-right');
+
+    // Outline: the outer frame and the inner card's outline follow the direction; the bar doesn't
+    const outline = await draw(customTheme({ outline: { mode: 'gradient', color: red, color2: blue, direction: 'bt' } }));
+    assert.ok(isRed(outline(477, 299)) && isBlue(outline(477, 4)), 'frame: bottom to top');
+    assert.ok(isRed(outline(600, 254)) && isBlue(outline(600, 49)), 'inner outline: bottom to top');
+    assert.deepEqual(outline(262, 152), outline(925, 152), 'inner outline: same color on both sides');
+    assert.ok(isRed(outline(290, 172)) && isBlue(outline(870, 172)), 'bar: left to right');
+
+    const sideways = await draw(customTheme({ outline: { mode: 'gradient', color: red, color2: blue, direction: 'lr' } }));
+    assert.ok(isRed(sideways(4, 152)) && isBlue(sideways(949, 152)), 'frame: left to right');
+    assert.ok(isRed(sideways(262, 152)) && isBlue(sideways(925, 152)), 'inner outline: left to right');
+
+    const meta = await sharp(await renderRankCard({ member, level: 3, xpIntoLevel: 50, xpForNext: 300, position: 2, theme: customTheme({}) })).metadata();
     assert.equal(meta.width, 954);
+});
+
+test('custom theme: background pictures can be uploaded, turned off per server, and removed', async () => {
+    const world = await customWorld();
+    const { interaction } = world;
+    const green = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#00c000' } }).png().toBuffer();
+    const upload = (file) => shop.saveBackgroundImage({ ...interaction, fields: { getUploadedFiles: () => new Collection(file ? [['a1', file]] : []) } });
+    const picture = { url: 'data:image/png;base64,' + green.toString('base64'), contentType: 'image/png', size: green.length };
+
+    assert.match((await upload(picture)).notice, /Buy the custom theme first/);
+    await shop.buyCustomTheme(interaction);
+    assert.match((await upload({ ...picture, contentType: 'application/pdf' })).notice, /isn't a picture/);
+    assert.match((await upload({ ...picture, size: 50 * 1024 * 1024 })).notice, /too big/);
+    assert.match((await upload({ ...picture, url: 'data:image/png;base64,bm90IGFuIGltYWdl' })).notice, /couldn't read/);
+    assert.equal((await upload(picture)).saved, true);
+
+    const stored = await CardImage.findOne({ userId: 'u1' });
+    const meta = await sharp(stored.data).metadata();
+    assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', 930, 280], 'cropped to the card');
+    assert.equal((await customOf()).background.mode, 'image');
+
+    // Drawn in servers that allow pictures; the background color elsewhere
+    const member = await testMember();
+    const backgroundAt = async () => (await pixels(await cardForMember(interaction.client, interaction.guild, member)))(40, 20);
+    const [r, g, b] = await backgroundAt();
+    assert.ok(g > 150 && r < 60 && b < 60, 'the picture is the background');
+    await updateGuildSettings('g1', { $set: { 'settings.economy.allowCardImages': false } });
+    assert.deepEqual(await backgroundAt(), [0x1e, 0x1f, 0x22], 'pictures off: the background color instead');
+    assert.match((await upload(picture)).notice, /turned off in this server/);
+    assert.match(await shop.setPartMode(interaction, 'background', 'image'), /turned off in this server/);
+
+    assert.match(await shop.removeBackgroundImage(interaction), /removed/);
+    assert.equal(await CardImage.countDocuments(), 0);
+    const custom = await customOf();
+    assert.equal(custom.hasImage, false);
+    assert.equal(custom.background.mode, 'solid');
+});
+
+test('custom theme: the shop editor fits Discord\'s limits in every mode; forms open with the right fields', async () => {
+    const world = await customWorld();
+    const { interaction } = world;
+    const view = async (part) => inspectPanel(await shop.renderShop(interaction, { tab: 'themes', selected: 'custom', part }));
+    const check = ({ count, textLength, ids }, label) => {
+        assert.ok(count <= 40, `${label}: ${count} components`);
+        assert.ok(textLength <= 4000, `${label}: ${textLength} characters`);
+        assert.equal(new Set(ids).size, ids.length, `${label}: duplicate custom_id`);
+    };
+
+    const before = await view('background');
+    check(before, 'not bought');
+    assert.ok(before.ids.includes('shop:cbuy'));
+
+    await shop.buyCustomTheme(interaction);
+    await CardImage.create({ userId: 'u1', data: Buffer.from('x') });
+    await Wallet.updateOne({ userId: 'u1' }, { $set: { 'customTheme.hasImage': true } });
+    for (const [part, modes] of [['background', ['solid', 'gradient', 'image']], ['inner', ['solid', 'gradient']], ['outline', ['solid', 'gradient']]]) {
+        for (const mode of modes) {
+            await Wallet.updateOne({ userId: 'u1' }, { $set: { [`customTheme.${part}.mode`]: mode, [`customTheme.${part}.color2`]: blue } });
+            const panel = await view(part);
+            check(panel, `${part} ${mode}`);
+            assert.equal(panel.ids.includes(`shop:cdir:${part}`), mode === 'gradient', `${part} ${mode}: direction menu only for gradients`);
+            assert.equal(panel.ids.includes('shop:cupload'), mode === 'image');
+        }
+    }
+
+    // "Edit colors" opens a form with two colors for a gradient (outline is a gradient now), one otherwise
+    const opened = [];
+    const click = (customId) => shop.handleInteraction(null, { ...interaction, customId, showModal: async (m) => opened.push(m.toJSON()) });
+    await click('shop:cedit:outline');
+    await Wallet.updateOne({ userId: 'u1' }, { $set: { 'customTheme.inner.mode': 'solid' } });
+    await click('shop:cedit:inner');
+    await click('shop:cupload');
+    assert.equal(opened[0].custom_id, 'shop:csave:outline:gradient');
+    assert.equal(opened[0].components.length, 2);
+    assert.equal(opened[1].custom_id, 'shop:csave:inner:solid');
+    assert.equal(opened[1].components.length, 1);
+    assert.equal(opened[2].components[0].component.type, 19, 'a file upload');
+});
+
+test('settings: admins can turn custom card pictures off and on for their server', async () => {
+    const guild = fakeGuild();
+    const click = async (customId) => {
+        let rendered;
+        await settings.handleInteraction(null, {
+            customId, guildId: 'g1', guild, user: { id: 'admin' }, message: { id: 'm1' },
+            inGuild: () => true, memberPermissions: new PermissionsBitField(PermissionsBitField.Flags.Administrator),
+            deferUpdate: async () => {}, editReply: async (p) => { rendered = JSON.stringify(p.components[0].toJSON()); },
+        });
+        return rendered;
+    };
+    assert.match(await click('settings:eco:images:off'), /Card pictures\*\* · Off/);
+    assert.equal((await getGuildSettings('g1', { fresh: true })).economy.allowCardImages, false);
+    assert.match(await click('settings:eco:images:on'), /settings:eco:images:off/);
+    assert.equal((await getGuildSettings('g1', { fresh: true })).economy.allowCardImages, true);
 });

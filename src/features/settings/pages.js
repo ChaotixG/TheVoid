@@ -9,7 +9,7 @@ const {
 } = require('discord.js');
 const { separator, button, row, section, container, ButtonStyle } = require('../../utils/panels');
 const { coins } = require('../../utils/coins');
-const { DAILY, WEEKLY, CHAT, VOICE, PAY, SHOP } = require('../../config/economy');
+const { DAILY, WEEKLY, CHAT, VOICE, PAY, SHOP, CUSTOM_CARD_COLORS_ENABLED } = require('../../config/economy');
 
 const ACCENT = 0x5865F2;
 
@@ -290,10 +290,21 @@ function economy(guild, s, notice, footer = settingsFooter()) {
         `**🛍️ Role shop** · what this server sells in **/shop**\n${list}`,
         row(button('settings:eco:addrole', 'Add role', ButtonStyle.Success, { disabled: items.length >= SHOP.maxRoles })),
         remove ? row(remove) : null,
+        CUSTOM_CARD_COLORS_ENABLED ? cardPictures(s) : null,
         `-# Fixed rates: /daily ${DAILY.base} (+${DAILY.streakBonus} per streak day, up to +${DAILY.maxStreakBonus}) · /weekly ${WEEKLY.amount.toLocaleString()} · ` +
         `chat ${CHAT.min}–${CHAT.max} per minute · voice ${VOICE.amount} every ${VOICE.intervalMinutes} min while active · /pay tax ${PAY.taxPercent}%`,
         ...footer,
     ], ACCENT);
+}
+
+// Premium members with the custom /rank theme can use a picture as the background; servers can hide them
+function cardPictures(s) {
+    const on = s.economy.allowCardImages !== false;
+    return section(
+        `**🖼️ Card pictures** · ${on ? 'On' : 'Off'}
+-# Premium members can use their own picture as their **/rank** background. When off, their cards show colors instead in this server.`,
+        button(`settings:eco:images:${on ? 'off' : 'on'}`, on ? 'Turn off' : 'Turn on', on ? ButtonStyle.Secondary : ButtonStyle.Success),
+    );
 }
 
 function closed(message) {

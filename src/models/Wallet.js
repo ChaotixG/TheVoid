@@ -1,5 +1,13 @@
 const { Schema, model } = require('mongoose');
 
+// One part of a custom card theme (background, inner card or outline)
+const themePart = (modes) => ({
+	mode: { type: String, enum: modes, default: 'solid' },
+	color: { type: String, default: null },
+	color2: { type: String, default: null },
+	direction: { type: String, default: 'lr' },
+});
+
 // One wallet per user, shared across every server. Balances only change through atomic
 // $inc updates (see services/wallet.js), so concurrent earning and spending can't clash.
 const walletSchema = new Schema({
@@ -12,12 +20,15 @@ const walletSchema = new Schema({
 	lastWeekly: { type: Date, default: null },
 	ownedThemes: { type: [String], default: [] },
 	equippedTheme: { type: String, default: 'default' },
-	// Premium custom card colors (hex); the second color of each pair makes a gradient
+	// Premium custom theme (bought in /shop). Each part is a solid color or a gradient in one of the
+	// unlocked directions; the background can be an uploaded picture instead (stored in CardImage).
 	customTheme: {
-		background: { type: String, default: null },
-		background2: { type: String, default: null },
-		accent: { type: String, default: null },
-		accent2: { type: String, default: null },
+		owned: { type: Boolean, default: false },
+		directions: { type: [String], default: [] }, // unlocked gradient directions (config CUSTOM_THEME.directions)
+		background: themePart(['solid', 'gradient', 'image']),
+		inner: themePart(['solid', 'gradient']),
+		outline: themePart(['solid', 'gradient']),
+		hasImage: { type: Boolean, default: false },
 	},
 	// Coins won from games today (UTC), for the daily game cap
 	gameDay: { type: String, default: null },

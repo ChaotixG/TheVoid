@@ -25,8 +25,22 @@ module.exports = {
     // Approved from rendered previews. While off, /shop shows "coming soon" and /rank always uses
     // the default look (identical to the card before themes existed).
     CARD_THEMES_ENABLED: true,
-    // Premium custom colors (hex codes and gradients). Off until rendered previews are approved.
+    // Premium custom theme (colors, gradients, background image). Off until rendered previews are approved.
     CUSTOM_CARD_COLORS_ENABLED: false,
+    CUSTOM_THEME: {
+        price: 10_000,          // premium members only
+        directionPrice: 2_500,  // each gradient direction beyond the free one
+        freeDirection: 'lr',
+        // Left→right and right→left look alike, so only one of each pair is offered
+        directions: {
+            lr: { label: 'Left → right', arrow: '→' },
+            bt: { label: 'Bottom → top', arrow: '↑' },
+            bltr: { label: 'Bottom-left → top-right', arrow: '↗' },
+            tlbr: { label: 'Top-left → bottom-right', arrow: '↘' },
+        },
+        defaults: { background: '#1e1f22', inner: '#2b2d31', outline: '#5865f2' },
+        maxImageBytes: 8 * 1024 * 1024,
+    },
     // Colors: outer = the card around the inner box; background/border = the inner box;
     // track = the empty part of the progress bar. null = the card library default (Default theme).
     THEMES: [

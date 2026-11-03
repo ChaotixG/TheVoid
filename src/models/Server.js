@@ -48,6 +48,8 @@ const serverSchema = new Schema({
 		},
 		// Coin amounts are fixed in code (config/economy.js); servers only choose what /shop sells
 		economy: {
+			// Custom /rank background images (uploaded by custom theme owners) shown in this server
+			allowCardImages: { type: Boolean, default: true },
 			shopRoles: {
 				type: [new Schema({
 					roleId: { type: String, required: true },

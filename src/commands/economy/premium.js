@@ -22,7 +22,7 @@ module.exports = {
                 `- ×${PREMIUM.dailyMultiplier} **/daily** and **/weekly** rewards`,
                 `- ×${PREMIUM.coinMultiplier} coins from chatting and voice`,
                 `- +${Math.round((PREMIUM.xpMultiplier - 1) * 100)}% XP`,
-                CUSTOM_CARD_COLORS_ENABLED ? '- Custom **/rank** card colors: your own hex codes and gradients (in **/shop**)' : null,
+                CUSTOM_CARD_COLORS_ENABLED ? '- The custom **/rank** card theme: your own colors, gradients and background picture (in **/shop**)' : null,
                 '-# Premium works in every server I\'m in.',
                 !premium && url ? `**Get premium:** ${url}` : null,
             ].filter(Boolean).join('\n'),

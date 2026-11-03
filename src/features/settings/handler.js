@@ -175,6 +175,11 @@ async function applyChange(interaction, area, action, arg) {
         // ── Economy (coin amounts are fixed in code; servers only choose what /shop sells) ──
         case 'eco:addrolemodal':
             return { page: 'economy', notice: await saveShopRole(interaction) };
+        case 'eco:images': {
+            const allow = arg === 'on';
+            await save(interaction, { $set: { 'settings.economy.allowCardImages': allow } });
+            return { page: 'economy', notice: allow ? '✅ Card pictures are on' : '✅ Card pictures are off · cards show their colors instead in this server' };
+        }
         case 'eco:removerole': {
             const roleId = interaction.values[0];
             await save(interaction, { $pull: { 'settings.economy.shopRoles': { roleId } } });
