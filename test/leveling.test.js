@@ -55,3 +55,35 @@ test('migration copies embedded users without changing anyone\'s level, and keep
     assert.equal(raw.channels, undefined);
     assert.equal(await TempVoiceChannel.countDocuments({ channelId: 'vc1' }), 1);
 });
+
+test('old code running after a migration: the original backup is never overwritten', async () => {
+    await Server.collection.insertOne({
+        guildId: 'g1',
+        users: [{ userId: 'a', level: 5, xp: 10 }],
+        channels: [],
+        settings: { channels: [{ name: 'Hub', channelId: 'h1' }] },
+    });
+    await runMigrations();
+
+    // The old bot keeps running on the migrated data: fresh XP list, a new hub, a temp channel
+    await Server.collection.updateOne({ guildId: 'g1' }, { $set: {
+        users: [{ userId: 'a', level: 1, xp: 30 }, { userId: 'newcomer', level: 1, xp: 20 }],
+        channels: [{ channelId: 'vc9', channelName: 'Temp' }],
+        'settings.channels': [{ name: 'Hub', channelId: 'h1' }, { name: 'Hub 2', channelId: 'h2' }],
+    } });
+    await runMigrations();
+
+    const raw = await Server.collection.findOne({ guildId: 'g1' });
+    assert.deepEqual(raw.legacyUsers, [{ userId: 'a', level: 5, xp: 10 }], 'original backup untouched');
+    const extraKey = Object.keys(raw).find(k => k.startsWith('legacyUsers_'));
+    assert.equal(raw[extraKey].length, 2, 'the old bot\x27s later list is kept separately');
+    assert.equal(raw.users, undefined);
+
+    const a = await Member.findOne({ guildId: 'g1', userId: 'a' }).lean();
+    assert.equal(levelProgress(a.totalXp).level, 5, 'existing members keep their real level');
+    assert.ok(await Member.exists({ guildId: 'g1', userId: 'newcomer' }), 'people who first chatted meanwhile are added');
+
+    assert.deepEqual(raw.settings.voiceHubs.map(h => h.channelId), ['h1', 'h2'], 'hubs added meanwhile are merged');
+    assert.equal(raw.settings.channels, undefined);
+    assert.ok(await TempVoiceChannel.exists({ channelId: 'vc9' }));
+});

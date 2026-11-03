@@ -9,7 +9,7 @@ const { info } = require('../services/logger');
 
 async function migrateEmbeddedUsers() {
     const servers = await Server.collection
-        .find({ 'users.0': { $exists: true } }, { projection: { guildId: 1, users: 1 } })
+        .find({ 'users.0': { $exists: true } }, { projection: { guildId: 1, users: 1, legacyUsers: { $slice: 1 } } })
         .toArray();
 
     let copied = 0;
@@ -35,7 +35,10 @@ async function migrateEmbeddedUsers() {
             const result = await Member.bulkWrite(ops, { ordered: false });
             copied += result.upsertedCount;
         }
-        await Server.collection.updateOne({ _id: server._id }, { $rename: { users: 'legacyUsers' } });
+        // If old code wrote a new `users` list after a previous migration, keep it under its own
+        // name; renaming it to `legacyUsers` would overwrite the original backup
+        const keepAs = server.legacyUsers ? `legacyUsers_${Date.now()}` : 'legacyUsers';
+        await Server.collection.updateOne({ _id: server._id }, { $rename: { users: keepAs } });
     }
     if (servers.length) info(`Migration: copied ${copied} members from ${servers.length} servers (old list kept as legacyUsers)`);
 }
@@ -46,6 +49,19 @@ async function migrateVoiceHubs() {
         { $rename: { 'settings.channels': 'settings.voiceHubs' } }
     );
     if (result.modifiedCount) info(`Migration: moved voice hubs for ${result.modifiedCount} servers`);
+
+    // Hubs added by old code after a previous migration: merge them in instead of ignoring them
+    const both = await Server.collection
+        .find({ 'settings.channels': { $exists: true }, 'settings.voiceHubs': { $exists: true } }, { projection: { settings: 1 } })
+        .toArray();
+    for (const server of both) {
+        const known = new Set((server.settings.voiceHubs || []).map(h => h.channelId));
+        const extra = (server.settings.channels || []).filter(h => h?.channelId && !known.has(h.channelId));
+        await Server.collection.updateOne({ _id: server._id }, {
+            ...(extra.length ? { $push: { 'settings.voiceHubs': { $each: extra } } } : {}),
+            $unset: { 'settings.channels': '' },
+        });
+    }
 }
 
 async function migrateTempVoiceChannels() {
