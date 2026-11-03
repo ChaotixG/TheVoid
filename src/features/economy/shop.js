@@ -1,11 +1,21 @@
 // /shop: server roles (chosen by each server's admins) and /rank card themes (fixed catalog).
 // The panel is stateless ("shop:*" custom IDs carry the selection and the price shown), and every
 // purchase is an atomic wallet debit, refunded if the role can't be given.
-const { MessageFlags, PermissionFlagsBits, StringSelectMenuBuilder } = require('discord.js');
+const {
+    AttachmentBuilder,
+    LabelBuilder,
+    MessageFlags,
+    ModalBuilder,
+    PermissionFlagsBits,
+    StringSelectMenuBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+} = require('discord.js');
 const Wallet = require('../../models/Wallet');
 const RolePurchase = require('../../models/RolePurchase');
 const Transaction = require('../../models/Transaction');
-const { THEMES, CARD_THEMES_ENABLED } = require('../../config/economy');
+const { THEMES, CARD_THEMES_ENABLED, CUSTOM_CARD_COLORS_ENABLED } = require('../../config/economy');
+const { cardForMember, normalizeHex } = require('../leveling/rankCard');
 const { getGuildSettings } = require('../../services/guildSettings');
 const { getWallet, debit, credit } = require('../../services/wallet');
 const { isPremium } = require('../../services/premium');
@@ -81,18 +91,43 @@ async function themesTab(interaction, wallet, selectedId) {
     if (!CARD_THEMES_ENABLED) return ['🎨 Card themes for your **/rank** card are coming soon.'];
     const premium = await isPremium(interaction.client, interaction.user.id);
     const status = (t) => wallet.equippedTheme === t.id ? '⭐ equipped' : ownsTheme(wallet, t.id) ? '✅ owned' : t.premium ? '💎 premium' : '';
-    const list = THEMES.map(t => `**${t.name}** · ${t.price ? coins(t.price) : 'free'}${status(t) ? ` · ${status(t)}` : ''}`).join('\n');
+    const custom = wallet.customTheme ?? {};
+    const lines = THEMES.map(t => `**${t.name}** · ${t.price ? coins(t.price) : 'free'}${status(t) ? ` · ${status(t)}` : ''}`);
+    if (CUSTOM_CARD_COLORS_ENABLED) {
+        lines.push(`**Custom colors** · 💎 premium${wallet.equippedTheme === 'custom' ? ' · ⭐ equipped' : custom.background ? ' · ✅ saved' : ''}`);
+    }
     const select = new StringSelectMenuBuilder()
         .setCustomId('shop:picktheme')
         .setPlaceholder('Choose a theme for your /rank card…')
-        .addOptions(THEMES.map(t => ({
-            label: t.name,
-            description: `${t.price ? `${t.price.toLocaleString()} coins` : 'Free'}${t.premium ? ' · premium only' : ''}`,
-            value: t.id,
-            default: t.id === selectedId,
-        })));
+        .addOptions([
+            ...THEMES.map(t => ({
+                label: t.name,
+                description: `${t.price ? `${t.price.toLocaleString()} coins` : 'Free'}${t.premium ? ' · premium only' : ''}`,
+                value: t.id,
+                default: t.id === selectedId,
+            })),
+            ...(CUSTOM_CARD_COLORS_ENABLED ? [{
+                label: 'Custom colors',
+                description: 'Premium · your own hex colors and gradients',
+                value: 'custom',
+                default: selectedId === 'custom',
+            }] : []),
+        ]);
 
-    const parts = [list, row(select)];
+    const parts = [lines.join('\n'), row(select)];
+
+    if (selectedId === 'custom' && CUSTOM_CARD_COLORS_ENABLED) {
+        const pair = (a, b) => (a ? `${a}${b ? ` → ${b}` : ''}` : 'not set');
+        const text = premium
+            ? `**Custom colors** · background ${pair(custom.background, custom.background2)} · accent ${pair(custom.accent, custom.accent2)}` +
+              '\n-# Use any hex code (like #ff8800). Add a second color for a gradient.'
+            : '**Custom colors** · pick any hex colors and gradients for your card.\n-# Premium only. See **/premium**.';
+        parts.push(section(text, button('shop:customedit', 'Edit colors', ButtonStyle.Primary, { emoji: '🎨', disabled: !premium })));
+        if (premium && custom.background && wallet.equippedTheme !== 'custom') {
+            parts.push(row(button('shop:equip:custom', 'Equip custom colors', ButtonStyle.Success)));
+        }
+        return parts;
+    }
     const theme = THEMES.find(t => t.id === selectedId);
     if (theme) {
         let action;
@@ -186,6 +221,7 @@ async function buyTheme(interaction, themeId) {
 
 async function equipTheme(interaction, themeId) {
     const userId = interaction.user.id;
+    if (themeId === 'custom') return equipCustom(interaction);
     const theme = THEMES.find(t => t.id === themeId);
     if (!CARD_THEMES_ENABLED) return 'Card themes are coming soon.';
     if (!theme) return '⚠️ Unknown theme.';
@@ -196,6 +232,68 @@ async function equipTheme(interaction, themeId) {
         { upsert: theme.id === 'default' }
     );
     return result.matchedCount || result.upsertedCount ? `✅ **${theme.name}** equipped.` : 'You don\'t own that theme yet.';
+}
+
+// ─── Premium custom colors ────────────────────────────────────
+const CUSTOM_FIELDS = [
+    { id: 'background', label: 'Background color', description: 'Hex code, e.g. #1a1a2e', required: true },
+    { id: 'background2', label: 'Background gradient (optional)', description: 'A second hex code fades the background into it', required: false },
+    { id: 'accent', label: 'Accent color', description: 'Progress bar, name and frame, e.g. #e94560', required: true },
+    { id: 'accent2', label: 'Accent gradient (optional)', description: 'A second hex code fades the accent into it', required: false },
+];
+
+async function customColorsForm(interaction) {
+    const saved = (await getWallet(interaction.user.id)).customTheme ?? {};
+    return new ModalBuilder()
+        .setCustomId('shop:customsave')
+        .setTitle('Custom card colors')
+        .addLabelComponents(CUSTOM_FIELDS.map(f => {
+            const input = new TextInputBuilder().setCustomId(f.id).setStyle(TextInputStyle.Short).setRequired(f.required).setMaxLength(7).setPlaceholder('#rrggbb');
+            if (saved[f.id]) input.setValue(saved[f.id]);
+            return new LabelBuilder().setLabel(f.label).setDescription(f.description).setTextInputComponent(input);
+        }));
+}
+
+/** Saves and equips the colors from the form. Returns { notice, saved } */
+async function saveCustomColors(interaction) {
+    if (!CUSTOM_CARD_COLORS_ENABLED) return { notice: 'Custom colors are coming soon.' };
+    if (!await isPremium(interaction.client, interaction.user.id)) return { notice: '⚠️ Custom colors are for premium members. See **/premium**.' };
+
+    const colors = {};
+    for (const field of CUSTOM_FIELDS) {
+        const raw = interaction.fields.getTextInputValue(field.id)?.trim() ?? '';
+        if (!raw && !field.required) { colors[field.id] = null; continue; }
+        const hex = normalizeHex(raw);
+        if (!hex) return { notice: `⚠️ "${raw.slice(0, 20)}" isn't a hex color. Use something like #ff8800.` };
+        colors[field.id] = hex;
+    }
+    await Wallet.updateOne(
+        { userId: interaction.user.id },
+        { $set: { customTheme: colors, equippedTheme: 'custom' } },
+        { upsert: true }
+    );
+    return { notice: '✅ Custom colors saved and equipped. Here\'s your card:', saved: true };
+}
+
+async function equipCustom(interaction) {
+    if (!CUSTOM_CARD_COLORS_ENABLED) return 'Custom colors are coming soon.';
+    if (!await isPremium(interaction.client, interaction.user.id)) return '⚠️ Custom colors are for premium members. See **/premium**.';
+    const result = await Wallet.updateOne(
+        { userId: interaction.user.id, 'customTheme.background': { $ne: null } },
+        { $set: { equippedTheme: 'custom' } }
+    );
+    return result.matchedCount ? '✅ Custom colors equipped.' : 'Set your colors first with **Edit colors**.';
+}
+
+// Shows the member their own card with the new colors (best effort: it's only a preview)
+async function sendCardPreview(interaction) {
+    try {
+        const member = interaction.guild.members.cache.get(interaction.user.id) ?? interaction.member;
+        const card = await cardForMember(interaction.client, interaction.guild, member);
+        await interaction.followUp({ files: [new AttachmentBuilder(card, { name: 'card-preview.png' })], flags: MessageFlags.Ephemeral });
+    } catch (err) {
+        warn(`Could not render a card preview for ${interaction.user.id}: ${err.message}`);
+    }
 }
 
 // ─── Interactions ─────────────────────────────────────────────
@@ -211,9 +309,12 @@ async function handleInteraction(client, interaction) {
         await interaction.deferUpdate();
         return interaction.deleteReply().catch(() => {});
     }
+    // Opening a form must be the first response
+    if (action === 'customedit') return interaction.showModal(await customColorsForm(interaction));
 
     await interaction.deferUpdate();
     let view;
+    let preview = false;
     switch (action) {
         case 'tab': view = { tab: arg === 'themes' ? 'themes' : 'roles' }; break;
         case 'pickrole': view = { tab: 'roles', selected: interaction.values[0] }; break;
@@ -221,9 +322,16 @@ async function handleInteraction(client, interaction) {
         case 'buyrole': view = { tab: 'roles', selected: arg, notice: await buyRole(interaction, arg, Number(extra)) }; break;
         case 'buytheme': view = { tab: 'themes', selected: arg, notice: await buyTheme(interaction, arg) }; break;
         case 'equip': view = { tab: 'themes', selected: arg, notice: await equipTheme(interaction, arg) }; break;
+        case 'customsave': {
+            const { notice, saved } = await saveCustomColors(interaction);
+            view = { tab: 'themes', selected: 'custom', notice };
+            preview = Boolean(saved);
+            break;
+        }
         default: view = {};
     }
     await interaction.editReply(await renderShop(interaction, view));
+    if (preview) await sendCardPreview(interaction);
 }
 
 // ─── Timed roles ──────────────────────────────────────────────
@@ -278,4 +386,4 @@ function startRoleExpiry(client) {
     }, 5 * 60_000).unref();
 }
 
-module.exports = { openShop, handleInteraction, renderShop, buyRole, buyTheme, equipTheme, removeExpiredRoles, startRoleExpiry };
+module.exports = { openShop, handleInteraction, renderShop, buyRole, buyTheme, equipTheme, saveCustomColors, removeExpiredRoles, startRoleExpiry };

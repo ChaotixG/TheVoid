@@ -21,7 +21,7 @@ module.exports = {
         if (problem) return interaction.reply({ content: problem, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         if (!member.kickable) return interaction.reply({ content: 'I can\'t kick them: their highest role is above mine.', flags: MessageFlags.Ephemeral });
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // the mod log is the shared record
         await notifyUser(member.user, `You were kicked from **${interaction.guild.name}**. Reason: ${reason}`);
         await member.kick(`${reason} (by ${interaction.user.tag})`);
 

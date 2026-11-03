@@ -7,6 +7,7 @@ const { startDatabase, stopDatabase, clearDatabase, fakeGuild } = require('./hel
 // shop logic (the off switch itself is tested at the end)
 const economyConfig = require('../src/config/economy');
 economyConfig.CARD_THEMES_ENABLED = true;
+economyConfig.CUSTOM_CARD_COLORS_ENABLED = true; // also off until approved; tested here
 
 const Member = require('../src/models/Member');
 const Wallet = require('../src/models/Wallet');
@@ -101,7 +102,7 @@ test('premium comes only from the owner\'s server role and doubles /daily', asyn
 
 test('/pay moves coins minus tax and can never overdraw, even when spammed', async () => {
     await Wallet.create({ userId: 'u1', balance: 100 });
-    const target = { id: 'u2', bot: false };
+    const target = { id: 'u2', bot: false, send: async () => {} };
     const runs = [1, 2, 3].map(() => fakeCommand({ options: { user: target, amount: 60 } }));
     await Promise.all(runs.map(r => pay.callback(noClient, r.interaction)));
 
@@ -327,4 +328,48 @@ test('voice: stage listeners (who can\x27t speak) don\x27t count as active', () 
     state('c', false);
     assert.equal(isActiveInVoice(listener), false);
     assert.equal(isActiveInVoice(speaker), true);
+});
+
+// ─── Premium custom card colors ───────────────────────────────
+const { normalizeHex, customTheme, resolveCardTheme, renderRankCard } = require('../src/features/leveling/rankCard');
+
+test('custom colors: hex codes are normalized, junk is refused, light backgrounds get dark text', () => {
+    assert.equal(normalizeHex('#F80'), '#ff8800');
+    assert.equal(normalizeHex('1a1a2e'), '#1a1a2e');
+    assert.equal(normalizeHex('zzz'), null);
+    assert.equal(normalizeHex('#12345'), null);
+    assert.equal(customTheme({ background: '#f5f5f5', accent: '#3f51b5' }).light, true);
+    const dark = customTheme({ background: '#2b5876', background2: '#4e4376', accent: '#f7971e', accent2: '#ffd200' });
+    assert.equal(dark.light, false);
+    assert.deepEqual(dark.outerGradient, ['#2b5876', '#4e4376']);
+    assert.deepEqual(dark.accentGradient, ['#f7971e', '#ffd200']);
+});
+
+test('custom colors: premium only; saved colors are equipped and used on the card', async () => {
+    const formFields = (values) => ({ getTextInputValue: (id) => values[id] ?? '' });
+    const world = shopWorld({ balance: 0 });
+    await world.setup();
+    const save = (client, values) => shop.saveCustomColors({ ...world.interaction, client, fields: formFields(values) });
+
+    assert.match((await save(noClient, { background: '#112233', accent: '#ff0000' })).notice, /premium members/);
+    const client = premiumClient(['u1']);
+    assert.match((await save(client, { background: 'oops', accent: '#ff0000' })).notice, /isn't a hex color/);
+    assert.equal((await save(client, { background: '123', background2: '#445566', accent: 'F00' })).saved, true);
+
+    const wallet = await Wallet.findOne({ userId: 'u1' }).lean();
+    assert.equal(wallet.equippedTheme, 'custom');
+    assert.deepEqual(wallet.customTheme, { background: '#112233', background2: '#445566', accent: '#ff0000', accent2: null });
+    assert.equal((await resolveCardTheme(client, 'u1')).id, 'custom');
+    forgetPremium('u1');
+    assert.equal((await resolveCardTheme(noClient, 'u1')).id, 'default', 'premium lapsed: back to the default card');
+});
+
+test('custom colors: a gradient card renders', async () => {
+    const sharp = require('sharp');
+    const avatar = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#7289da' } }).png().toBuffer();
+    const member = { displayColor: 0, displayName: 'Tester', user: { username: 'tester', displayAvatarURL: () => 'data:image/png;base64,' + avatar.toString('base64') }, presence: null };
+    const card = await renderRankCard({ member, level: 3, xpIntoLevel: 50, xpForNext: 300, position: 2, theme: customTheme({ background: '#2b5876', background2: '#4e4376', accent: '#f7971e', accent2: '#ffd200' }) });
+    const meta = await sharp(card).metadata();
+    assert.equal(meta.format, 'png');
+    assert.equal(meta.width, 954);
 });

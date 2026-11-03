@@ -1,6 +1,6 @@
 const { ApplicationIntegrationType, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { isPremium, premiumEnabled, premiumConfig } = require('../../services/premium');
-const { PREMIUM } = require('../../config/economy');
+const { PREMIUM, CUSTOM_CARD_COLORS_ENABLED } = require('../../config/economy');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,6 +22,7 @@ module.exports = {
                 `- ×${PREMIUM.dailyMultiplier} **/daily** and **/weekly** rewards`,
                 `- ×${PREMIUM.coinMultiplier} coins from chatting and voice`,
                 `- +${Math.round((PREMIUM.xpMultiplier - 1) * 100)}% XP`,
+                CUSTOM_CARD_COLORS_ENABLED ? '- Custom **/rank** card colors: your own hex codes and gradients (in **/shop**)' : null,
                 '-# Premium works in every server I\'m in.',
                 !premium && url ? `**Get premium:** ${url}` : null,
             ].filter(Boolean).join('\n'),

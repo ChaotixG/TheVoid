@@ -10,15 +10,11 @@ module.exports = {
         .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     callback: async (client, interaction) => {
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // economy replies are private
         const result = await claimWeekly(client, interaction.user.id, interaction.guildId);
 
         if (!result.claimed) {
-            await interaction.deleteReply().catch(() => {});
-            return interaction.followUp({
-                content: `⏳ You already claimed this week's reward. Come back <t:${Math.ceil(result.nextAt / 1000)}:R>.`,
-                flags: MessageFlags.Ephemeral,
-            });
+            return interaction.editReply(`⏳ You already claimed this week's reward. Come back <t:${Math.ceil(result.nextAt / 1000)}:R>.`);
         }
         await interaction.editReply(`💰 You claimed ${coins(result.amount)} coins!${result.premium ? ' (premium ×2)' : ''} You now have ${coins(result.wallet.balance)}.`);
     },

@@ -18,16 +18,15 @@ module.exports = {
         if (target.id === interaction.user.id) return interaction.reply({ content: 'You can\'t pay yourself.', flags: MessageFlags.Ephemeral });
         if (target.bot) return interaction.reply({ content: 'Bots don\'t have wallets.', flags: MessageFlags.Ephemeral });
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // economy replies are private
         const result = await transfer(interaction.user.id, target.id, amount, interaction.guildId);
-        if (!result) {
-            await interaction.deleteReply().catch(() => {});
-            return interaction.followUp({ content: `You don't have ${coins(amount)} coins.`, flags: MessageFlags.Ephemeral });
-        }
+        if (!result) return interaction.editReply(`You don't have ${coins(amount)} coins.`);
 
         await interaction.editReply({
-            content: `💸 <@${interaction.user.id}> sent ${coins(result.received)} coins to <@${target.id}> (tax: ${result.tax.toLocaleString()}).`,
-            allowedMentions: { users: [target.id] },
+            content: `💸 You sent ${coins(result.received)} coins to <@${target.id}> (tax: ${result.tax.toLocaleString()}). You have ${coins(result.balance)} left.`,
+            allowedMentions: { parse: [] },
         });
+        // The reply is private, so let the receiver know by DM (if they accept DMs)
+        await target.send(`💰 <@${interaction.user.id}> sent you ${coins(result.received)} coins in **${interaction.guild?.name ?? 'a server'}**.`).catch(() => {});
     },
 };

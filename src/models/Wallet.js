@@ -12,6 +12,13 @@ const walletSchema = new Schema({
 	lastWeekly: { type: Date, default: null },
 	ownedThemes: { type: [String], default: [] },
 	equippedTheme: { type: String, default: 'default' },
+	// Premium custom card colors (hex); the second color of each pair makes a gradient
+	customTheme: {
+		background: { type: String, default: null },
+		background2: { type: String, default: null },
+		accent: { type: String, default: null },
+		accent2: { type: String, default: null },
+	},
 	// Coins won from games today (UTC), for the daily game cap
 	gameDay: { type: String, default: null },
 	gameEarned: { type: Number, default: 0 },

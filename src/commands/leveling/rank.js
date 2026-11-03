@@ -1,13 +1,6 @@
-const { ActivityType, ApplicationIntegrationType, AttachmentBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
-const canvacord = require('canvacord');
-const sharp = require('sharp');
+const { ApplicationIntegrationType, AttachmentBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const Member = require('../../models/Member');
-const { levelProgress } = require('../../utils/leveling');
-const { getWallet } = require('../../services/wallet');
-const { isPremium } = require('../../services/premium');
-const { THEMES, CARD_THEMES_ENABLED } = require('../../config/economy');
-
-canvacord.Font.loadDefault(); // load the font once, not on every /rank
+const { cardForMember } = require('../../features/leveling/rankCard');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,15 +10,16 @@ module.exports = {
         .setContexts(InteractionContextType.Guild)
         .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
+    // The card itself is drawn in features/leveling/rankCard.js (shared with the /shop preview)
     callback: async (client, interaction) => {
         const user = interaction.options.getUser('user') ?? interaction.user;
         const self = user.id === interaction.user.id;
-        if (user.bot) return interaction.reply({ content: 'Bots don\x27t earn XP.', flags: MessageFlags.Ephemeral });
+        if (user.bot) return interaction.reply({ content: 'Bots don\'t earn XP.', flags: MessageFlags.Ephemeral });
 
         await interaction.deferReply();
 
-        const targetUserObj = await interaction.guild.members.fetch(user.id).catch(() => null);
-        if (!targetUserObj) return interaction.editReply('They\x27re not in this server.');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member) return interaction.editReply('They\'re not in this server.');
 
         const record = await Member.findOne({ guildId: interaction.guildId, userId: user.id }, { totalXp: 1 }).lean();
         if (!record?.totalXp) {
@@ -35,159 +29,7 @@ module.exports = {
             });
         }
 
-        // Same ordering as /leaderboard: most XP first, ties broken by user ID
-        const position = 1 + await Member.countDocuments({
-            guildId: interaction.guildId,
-            $or: [{ totalXp: { $gt: record.totalXp } }, { totalXp: record.totalXp, userId: { $lt: user.id } }],
-        });
-        const { level, xpIntoLevel, xpForNext } = levelProgress(record.totalXp);
-
-        const roleHex = `#${targetUserObj.displayColor.toString(16).padStart(6, '0')}`;
-        const theme = await cardTheme(client, user.id);
-        const accent = theme.accent ?? roleHex;
-        const rank = new canvacord.RankCardBuilder()
-        .setDisplayName(targetUserObj.displayName) // Big name (globalName is null for some users)
-        .setUsername(targetUserObj.user.username) // small name, do not include it if you want to hide it
-        .setAvatar(targetUserObj.user.displayAvatarURL({ size: 256 })) // Avatar from the user object
-        .setCurrentXP(xpIntoLevel)
-        .setRequiredXP(xpForNext)
-        .setLevel(level)
-        .setRank(position)
-        //.setStatus(targetUserObj.presence?.status || 'offline')
-        .setFonts({ // Add this line to load fonts
-            progress: 'Arial', // For example, use Arial for progress
-            level: 'Arial', // Font for level text
-            rank: 'Arial', // Font for rank text
-            xp: 'Arial', // Font for XP text
-            username: 'Arial' // Font for username text
-        })
-        .setStyles({
-            container: {
-                style: {
-                backgroundColor: theme.background, // card background
-                border: `6px solid ${theme.border}`,  // 6px thick inner border
-                borderRadius: '16px',          // match or tweak your corner radius
-                padding: '8px'                // keep your inner spacing
-                }
-            },
-            avatar: {
-                image: {
-                style: {
-                    width: '160px',            // avatar diameter
-                    height: '160px',
-                    borderRadius: '50%',       // keep it round
-                    objectFit: 'cover',        // no distortion
-                    border: `7px solid ${getPresenceActivityColor(targetUserObj)}` // uniform 7px ring
-                }
-                }
-            },
-            progressbar: {
-                thumb: {
-                    style: {
-                        backgroundColor: accent
-                    }
-                },
-                // The empty part of the bar ("track"); null keeps the library default
-                track: theme.track ? { style: { backgroundColor: theme.track } } : undefined,
-                border: { style: { backgroundColor: "#99AAB5" } }
-            },
-            username: {
-                handle: { style: { color: "#aaaaaa", fontSize: 14 } },
-                name: { style: { color: accent, fontSize: 34 } }
-            },
-            level: { style: { color: '#FFFFFF', fontSize: 24 } },
-            rank: { style: { color: '#FFFFFF', fontSize: 24 } },
-            xp: { style: { color: '#FFFFFF', fontSize: 18 } }
-            })
-
-        // The area around the inner box: the card background plus the overlay drawn on top of it
-        if (theme.outer) rank.setBackground(theme.outer).setOverlay(theme.outer);
-
-        const raw = await rank.build();
-        const final = await roundAndBorder(raw, accent, 24, 12) // Round corners and add border
-        const attachement = new AttachmentBuilder(final);
-        await interaction.editReply({files: [attachement]});
+        const card = await cardForMember(client, interaction.guild, member);
+        await interaction.editReply({ files: [new AttachmentBuilder(card)] });
     },
 };
-
-// The card theme the member equipped in /shop; the default look when themes are off,
-// or when a premium-only theme is equipped but premium has lapsed
-async function cardTheme(client, userId) {
-    const fallback = THEMES.find(t => t.id === 'default');
-    if (!CARD_THEMES_ENABLED) return fallback;
-    const { equippedTheme } = await getWallet(userId);
-    const theme = THEMES.find(t => t.id === equippedTheme) ?? fallback;
-    if (theme.premium && !await isPremium(client, userId)) return fallback;
-    return theme;
-}
-
-function getPresenceActivityColor(member) {
-  // Define your presence‑status colors
-  const statusColors = {
-    online:    '#489c54', // green
-    idle:      '#bf9353', // yellow
-    dnd:       '#cb3543', // red
-    invisible: '#181818', // dark gray
-    offline:   '#181818'  // dark gray
-  };
-
-  // Define your activity colors
-  const activityColors = {
-    [ActivityType.Playing]:   '#2edb48', // blurple
-    [ActivityType.Streaming]: '#d4382a', // red‑orange
-    [ActivityType.Listening]: '#489c54', // green
-    [ActivityType.Watching]:  '#d45a2a', // orange‑yellow
-    [ActivityType.Competing]: '#FFD700', // gold
-    [ActivityType.Custom]:    '#EB459E'  // fuchsia (for custom statuses)
-  };
-
-  // Grab their first activity, if any
-  const activity = member.presence?.activities[0];
-  if (activity && activity.type in activityColors) {
-    return activityColors[activity.type];
-  }
-
-  // Otherwise use their presence status
-  const status = member.presence?.status || 'offline';
-  return statusColors[status] || '#2C2F33';
-}
-
-async function roundAndBorder(data, roleHex, radius = 24, border = 12) {
-  const { width, height } = await sharp(data).metadata();
-
-  // 1️⃣ Make the original image rounded
-  const roundedInner = await sharp(data)
-    .composite([{
-      input: Buffer.from(`
-        <svg width="${width}" height="${height}">
-          <rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="#fff" />
-        </svg>
-      `),
-      blend: 'dest-in'
-    }])
-    .png()
-    .toBuffer();
-
-  // 2️⃣ Create the border background with a rounded hole
-  const totalWidth = width + border * 2;
-  const totalHeight = height + border * 2;
-  const borderSvg = Buffer.from(`
-    <svg width="${totalWidth}" height="${totalHeight}">
-      <rect x="0" y="0" width="${totalWidth}" height="${totalHeight}" rx="${radius + border}" ry="${radius + border}" fill="${roleHex}" />
-    </svg>
-  `);
-
-  // 3️⃣ Composite the rounded image on top, centered
-  const final = await sharp(borderSvg)
-    .composite([
-      {
-        input: roundedInner,
-        top: border,
-        left: border
-      }
-    ])
-    .png()
-    .toBuffer();
-
-  return final;
-}

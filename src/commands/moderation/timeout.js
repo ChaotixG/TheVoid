@@ -34,7 +34,7 @@ module.exports = {
         // Administrators can't be timed out, and neither can anyone above the bot
         if (!member.moderatable) return interaction.reply({ content: 'I can\'t time them out: they\'re an administrator or their highest role is above mine.', flags: MessageFlags.Ephemeral });
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // the mod log is the shared record
         const label = DURATIONS.find(d => d.value === seconds)?.name ?? `${seconds}s`;
 
         if (seconds === 0) {

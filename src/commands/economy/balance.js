@@ -1,4 +1,4 @@
-const { ApplicationIntegrationType, InteractionContextType, SlashCommandBuilder } = require('discord.js');
+const { ApplicationIntegrationType, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { getWallet } = require('../../services/wallet');
 const { isPremium } = require('../../services/premium');
 const { coins } = require('../../utils/coins');
@@ -21,6 +21,7 @@ module.exports = {
                 `💰 ${self ? 'You have' : `<@${user.id}> has`} ${coins(wallet.balance)} coins${premium ? ' · ⭐ Premium' : ''}`,
                 `-# Earned ${wallet.earned.toLocaleString()} · spent ${wallet.spent.toLocaleString()} · daily streak ${wallet.dailyStreak || 0}`,
             ].join('\n'),
+            flags: MessageFlags.Ephemeral, // economy replies are private
             allowedMentions: { parse: [] },
         });
     },

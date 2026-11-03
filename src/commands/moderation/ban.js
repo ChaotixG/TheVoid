@@ -33,7 +33,7 @@ module.exports = {
             if (!member.bannable) return interaction.reply({ content: 'I can\'t ban them: their highest role is above mine.', flags: MessageFlags.Ephemeral });
         }
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // the mod log is the shared record
         if (member) await notifyUser(user, `You were banned from **${interaction.guild.name}**. Reason: ${reason}`);
         await interaction.guild.bans.create(user.id, { reason: `${reason} (by ${interaction.user.tag})`, deleteMessageSeconds });
 

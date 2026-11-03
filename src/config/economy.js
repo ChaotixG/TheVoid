@@ -25,6 +25,8 @@ module.exports = {
     // Approved from rendered previews. While off, /shop shows "coming soon" and /rank always uses
     // the default look (identical to the card before themes existed).
     CARD_THEMES_ENABLED: true,
+    // Premium custom colors (hex codes and gradients). Off until rendered previews are approved.
+    CUSTOM_CARD_COLORS_ENABLED: false,
     // Colors: outer = the card around the inner box; background/border = the inner box;
     // track = the empty part of the progress bar. null = the card library default (Default theme).
     THEMES: [
