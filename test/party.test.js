@@ -74,13 +74,13 @@ function stubQuestions() {
 }
 
 // ─── /games menu ──────────────────────────────────────────────
-test('games menu: only its opener can use it; choosing a game shows its options; it fits Discord\'s limits', async () => {
+test('games menu: only its opener can use it; setting up a game shows its choices; it fits Discord\'s limits', async () => {
     const opened = fake({ userId: 'p1', options: { game: 'trivia' } });
     await menu.openMenu(opened.i);
     assert.match(text(opened.calls.replies[0]), /Multiple-choice questions/, 'opens on the game asked for');
 
-    assert.match(notice(await press('games:pick:p1', 'p2', { values: ['wordle'] })), /isn't yours/);
-    await press('games:pick:p1', 'p1', { values: ['connect4'] });
+    assert.match(notice(await press('games:tab:p1:party', 'p2')), /isn't yours/);
+    await press('games:setup:p1:connect4', 'p1');
     assert.match(latest(), /Opponent:\*\* me 🤖/);
 
     // Picking yourself is refused; picking someone sets the opponent
@@ -95,11 +95,25 @@ test('games menu: only its opener can use it; choosing a game shows its options;
     assert.deepEqual(menu.decode(entry, menu.encode(entry, { mode: 'race', difficulty: 'hard' })), { mode: 'race', difficulty: 'hard' });
     assert.deepEqual(menu.decode(entry, 'junk.junk'), { mode: 'solo', difficulty: 'any' }, 'unknown values fall back to the defaults');
 
-    for (const g of [null, ...menu.CATALOG.map(c => c.id)]) {
-        const { count, textLength, ids } = inspectPanel(menu.renderMenu('p1', g));
-        assert.ok(count <= 40 && textLength <= 4000, `${g}: ${count} components, ${textLength} characters`);
-        assert.equal(new Set(ids).size, ids.length, `${g}: duplicate custom_id`);
+    const views = [...['solo', 'versus', 'party'].map(tab => ({ tab })), ...menu.CATALOG.map(c => ({ gameId: c.id }))];
+    for (const view of views) {
+        const { count, textLength, ids } = inspectPanel(menu.renderMenu('p1', { ...view, coinsToday: 120, notice: 'A notice' }));
+        const label = view.tab ?? view.gameId;
+        assert.ok(count <= 40 && textLength <= 4000, `${label}: ${count} components, ${textLength} characters`);
+        assert.equal(new Set(ids).size, ids.length, `${label}: duplicate custom_id`);
     }
+});
+
+test('games menu: tabs list their games; Play starts a game in one click; today\'s game coins are shown', async () => {
+    await Wallet.create({ userId: 'p1', gameDay: new Date().toISOString().slice(0, 10), gameEarned: 120 });
+    await press('games:tab:p1:party', 'p1');
+    assert.match(latest(), /Crazy Eights/);
+    assert.doesNotMatch(latest(), /Wordle/);
+    assert.match(latest(), /game coins today: 120\/500/);
+    await press('games:setup:p1:trivia', 'p1');
+    assert.match(latest(), /games:back:p1:solo/, 'Back returns to the game\'s tab');
+    await press('games:play:p1:wordle', 'p1');
+    assert.equal(onlyGame().type, 'wordle');
 });
 
 test('games menu: Start turns the menu into the game, and a challenge pings the opponent', async () => {

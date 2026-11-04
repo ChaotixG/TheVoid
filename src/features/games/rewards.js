@@ -44,4 +44,10 @@ async function payEach(awards, { guildId = null, game } = {}) {
     return new Map(awards.map(({ userId }, i) => [userId, rewardText(paid[i])]));
 }
 
-module.exports = { payGameReward, rewardText, payEach };
+/** Coins this person has won from games today (counts toward DAILY_CAP) */
+async function gameCoinsToday(userId) {
+    const wallet = await Wallet.findOne({ userId }, { gameDay: 1, gameEarned: 1 }).lean();
+    return wallet?.gameDay === today() ? wallet.gameEarned : 0;
+}
+
+module.exports = { payGameReward, rewardText, payEach, gameCoinsToday };

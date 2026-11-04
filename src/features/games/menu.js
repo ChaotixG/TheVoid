@@ -5,22 +5,25 @@
 const { StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
 const gameConfig = require('../../config/games');
 const { DAILY_CAP, REWARDS, PARTY, HANGMAN, WORDLE } = gameConfig;
-const { container, separator, row, button, panelPayload, ButtonStyle } = require('../../utils/panels');
+const { container, separator, row, section, button, panelPayload, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { hangmanReward, minesweeperReward, connect4Reward } = require('./scoring');
+const { gameCoinsToday } = require('./rewards');
 const { games } = require('./sessions');
 const { BOT } = require('./common');
 const { GAMES } = require('./index');
 
 const COLOR = 0x5865F2;
-const CATEGORIES = { solo: '🎯 Solo', versus: '⚔️ Versus', party: '🎉 Party' };
+const CATEGORIES = { solo: { name: 'Solo', emoji: '🎯' }, versus: { name: 'Versus', emoji: '⚔️' }, party: { name: 'Party', emoji: '🎉' } };
 
 const DIFFICULTY = { key: 'difficulty', choices: [['any', 'Any difficulty'], ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']] };
 const players = (type) => `${PARTY[type].minPlayers}–${PARTY[type].maxPlayers} players`;
 const winnerCoins = (r) => `${r.winner} for the winner, +${r.perOpponent} per opponent`;
 
-// Every game in the menu. `options` are choices made before starting (first choice is the default);
-// `opponent` adds a "who to play" picker (empty = me). Coin amounts come from config/games.js.
+// Every game in the menu, listed under its category's tab. `options` are choices made before
+// starting (first choice is the default); `opponent` adds a "who to play" picker (empty = me).
+// Games with either get Set up (choices, then Start); the rest start in one click. Coin amounts
+// come from config/games.js.
 const CATALOG = [
     {
         id: 'wordle', name: 'Wordle', emoji: '🟩', category: 'solo',
@@ -136,56 +139,72 @@ function decode(entry, text = '') {
 }
 
 // ─── Drawing ──────────────────────────────────────────────────
-function renderMenu(ownerId, gameId = null, values = null, notice = null) {
-    const entry = CATALOG.find(g => g.id === gameId);
-    const chosen = entry ? (values ?? defaults(entry)) : null;
+const hasChoices = (entry) => Boolean(entry.options || entry.opponent);
+
+// One game in a tab: what it is and what it pays, with Play (or Set up) beside it
+function gameSection(ownerId, entry) {
+    return section(
+        `**${entry.emoji} ${entry.name}**${entry.players ? ` · ${entry.players}` : ''}\n${entry.short}\n-# Coins: ${entry.coins}`,
+        hasChoices(entry)
+            ? button(`games:setup:${ownerId}:${entry.id}`, 'Set up', ButtonStyle.Primary, { emoji: '⚙️' })
+            : button(`games:play:${ownerId}:${entry.id}`, 'Play', ButtonStyle.Success, { emoji: '▶️' }),
+    );
+}
+
+// A game's choices (options, opponent) and its Start button
+function setupView(ownerId, entry, chosen) {
     const state = encode(entry, chosen);
-    const listing = Object.entries(CATEGORIES)
-        .map(([category, label]) => `**${label}** · ${CATALOG.filter(g => g.category === category).map(g => `${g.emoji} ${g.name}`).join(' · ')}`)
-        .join('\n');
-
     const parts = [
-        `## 🎮 Games\n-# <@${ownerId}> is choosing a game · only they can use this menu`,
-        notice ? `-# ${notice}` : null,
-        listing,
-        row(new StringSelectMenuBuilder()
-            .setCustomId(`games:pick:${ownerId}`)
-            .setPlaceholder('Choose a game…')
-            .addOptions(CATALOG.map(g => ({
-                label: g.name,
-                value: g.id,
-                emoji: g.emoji,
-                description: `${CATEGORIES[g.category].split(' ')[1]} · ${g.short}`.slice(0, 100),
-                default: g.id === gameId,
-            })))),
+        `### ${entry.emoji} ${entry.name}\n${entry.about}` +
+        (entry.opponent ? `\n**Opponent:** ${chosen.opponentId === BOT ? 'me 🤖' : `<@${chosen.opponentId}>`}` : '') +
+        `\n-# ${entry.players ? `${entry.players} · ` : ''}Coins: ${entry.coins}`,
     ];
-
-    if (entry) {
-        parts.push(separator());
-        parts.push(
-            `### ${entry.emoji} ${entry.name}\n${entry.about}` +
-            (entry.opponent ? `\n**Opponent:** ${chosen.opponentId === BOT ? 'me 🤖' : `<@${chosen.opponentId}>`}` : '') +
-            `\n-# ${entry.players ? `${entry.players} · ` : ''}Coins: ${entry.coins} · games pay up to ${DAILY_CAP} a day`,
-        );
-        (entry.options ?? []).forEach((option, i) => parts.push(row(new StringSelectMenuBuilder()
-            .setCustomId(`games:opt:${ownerId}:${entry.id}:${i}:${state}`)
-            .addOptions(option.choices.map(([value, label]) => ({ label, value, default: value === chosen[option.key] }))))));
-        if (entry.opponent) {
-            const picker = new UserSelectMenuBuilder()
-                .setCustomId(`games:opp:${ownerId}:${entry.id}:${state}`)
-                .setPlaceholder('Play against me, or pick someone to challenge…')
-                .setMinValues(0)
-                .setMaxValues(1);
-            if (chosen.opponentId !== BOT) picker.setDefaultUsers(chosen.opponentId);
-            parts.push(row(picker));
-        }
+    (entry.options ?? []).forEach((option, i) => parts.push(row(new StringSelectMenuBuilder()
+        .setCustomId(`games:opt:${ownerId}:${entry.id}:${i}:${state}`)
+        .addOptions(option.choices.map(([value, label]) => ({ label, value, default: value === chosen[option.key] }))))));
+    if (entry.opponent) {
+        const picker = new UserSelectMenuBuilder()
+            .setCustomId(`games:opp:${ownerId}:${entry.id}:${state}`)
+            .setPlaceholder('Play against me, or pick someone to challenge…')
+            .setMinValues(0)
+            .setMaxValues(1);
+        if (chosen.opponentId !== BOT) picker.setDefaultUsers(chosen.opponentId);
+        parts.push(row(picker));
     }
-
     parts.push(row(
-        button(`games:start:${ownerId}:${entry?.id ?? ''}:${state}`, entry?.category === 'party' ? 'Open lobby' : 'Start', ButtonStyle.Success, { emoji: '▶️', disabled: !entry }),
-        button(`games:close:${ownerId}`, 'Close'),
+        button(`games:start:${ownerId}:${entry.id}:${state}`, entry.category === 'party' ? 'Open lobby' : 'Start', ButtonStyle.Success, { emoji: '▶️' }),
+        button(`games:back:${ownerId}:${entry.category}`, 'Back', ButtonStyle.Secondary, { emoji: '◀️' }),
     ));
+    return parts;
+}
+
+/**
+ * The menu: a tab of games, or one game's setup. `coinsToday` (game coins won today) is shown in
+ * the header when given.
+ */
+function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notice = null, coinsToday = null } = {}) {
+    const entry = CATALOG.find(g => g.id === gameId);
+    const current = entry?.category ?? (CATEGORIES[tab] ? tab : 'solo');
+    const parts = [
+        `## 🎮 Games\n-# <@${ownerId}>'s menu · only they can use it` +
+        (coinsToday === null ? '' : ` · game coins today: ${coinsToday}/${DAILY_CAP}`),
+        notice ? `-# ${notice}` : null,
+        row(
+            ...Object.entries(CATEGORIES).map(([id, c]) =>
+                button(`games:tab:${ownerId}:${id}`, c.name, id === current ? ButtonStyle.Primary : ButtonStyle.Secondary, { emoji: c.emoji })),
+            button(`games:close:${ownerId}`, 'Close'),
+        ),
+        separator(),
+        ...(entry
+            ? setupView(ownerId, entry, values ?? defaults(entry))
+            : CATALOG.filter(g => g.category === current).map(g => gameSection(ownerId, g))),
+    ];
     return { ...panelPayload(container(parts, COLOR)), allowedMentions: { parse: [] } };
+}
+
+// The menu with the owner's game coins for today
+async function menuView(ownerId, view) {
+    return renderMenu(ownerId, { ...view, coinsToday: await gameCoinsToday(ownerId) });
 }
 
 // ─── Menu lifetime ───────────────────────────────────────────
@@ -214,9 +233,11 @@ function forgetMenu(messageId) {
 }
 
 // ─── Interactions ─────────────────────────────────────────────
+// `/games game:<id>` opens on that game: its setup if it has choices, otherwise its tab
 async function openMenu(interaction) {
-    const gameId = interaction.options.getString('game');
-    const response = await interaction.reply({ ...renderMenu(interaction.user.id, gameId), withResponse: true });
+    const entry = CATALOG.find(g => g.id === interaction.options.getString('game'));
+    const view = entry ? (hasChoices(entry) ? { gameId: entry.id } : { tab: entry.category }) : {};
+    const response = await interaction.reply({ ...await menuView(interaction.user.id, view), withResponse: true });
     keepMenu(response?.resource?.message?.id, interaction);
 }
 
@@ -231,12 +252,13 @@ async function handleInteraction(client, interaction) {
         await interaction.deferUpdate();
         return interaction.deleteReply().catch(() => {});
     }
-    if (action === 'start' && entry) {
+    // Play starts a game with no choices in one click; Start starts one after its setup
+    if ((action === 'start' || action === 'play') && entry) {
         // A second click (while the first is still starting, e.g. fetching questions) is ignored
         if (starting.has(messageId) || gameOn(messageId)) return interaction.deferUpdate();
         starting.add(messageId);
         try {
-            await GAMES[entry.id].start(interaction, decode(entry, rest[0]));
+            await GAMES[entry.id].start(interaction, decode(entry, action === 'start' ? rest[0] : ''));
         } finally {
             starting.delete(messageId);
         }
@@ -248,12 +270,14 @@ async function handleInteraction(client, interaction) {
     }
 
     let view;
-    if (action === 'pick') {
-        view = renderMenu(ownerId, interaction.values[0]);
+    if (action === 'tab' || action === 'back') {
+        view = { tab: gameId }; // the tab's name is where a game ID would be
+    } else if (action === 'setup' && entry) {
+        view = { gameId: entry.id };
     } else if (action === 'opt' && entry?.options?.[rest[0]]) {
         const values = decode(entry, rest[1]);
         values[entry.options[rest[0]].key] = interaction.values[0];
-        view = renderMenu(ownerId, entry.id, values);
+        view = { gameId: entry.id, values };
     } else if (action === 'opp' && entry?.opponent) {
         const values = decode(entry, rest[0]);
         const picked = interaction.users?.first();
@@ -262,11 +286,11 @@ async function handleInteraction(client, interaction) {
         else if (picked.id === ownerId) notice = 'You can\'t challenge yourself. Leave it empty to play against me!';
         else if (picked.bot) notice = 'Other bots can\'t play. Leave it empty to play against me!';
         else values.opponentId = picked.id;
-        view = renderMenu(ownerId, entry.id, values, notice);
+        view = { gameId: entry.id, values, notice };
     } else {
         return interaction.deferUpdate();
     }
-    await interaction.update(view);
+    await interaction.update(await menuView(ownerId, view));
     keepMenu(messageId, interaction);
 }
 
