@@ -5,6 +5,7 @@ const {
     ButtonBuilder,
     ButtonStyle,
     ContainerBuilder,
+    MediaGalleryBuilder,
     MessageFlags,
     SectionBuilder,
     SeparatorBuilder,
@@ -35,6 +36,13 @@ const linkButton = (url, label, emoji) => {
 
 const row = (...components) => new ActionRowBuilder().addComponents(...components);
 
+// A picture in a panel, e.g. gallery('attachment://board.png') for a file sent with the message
+const gallery = (url, description) => new MediaGalleryBuilder().addItems(item => {
+    item.setURL(url);
+    if (description) item.setDescription(description);
+    return item;
+});
+
 // Text with a button on its right
 const section = (content, accessory) =>
     new SectionBuilder().addTextDisplayComponents(text(content)).setButtonAccessory(accessory);
@@ -53,6 +61,7 @@ function container(parts, accentColor) {
         else if (part instanceof SectionBuilder) c.addSectionComponents(part);
         else if (part instanceof SeparatorBuilder) c.addSeparatorComponents(part);
         else if (part instanceof ActionRowBuilder) c.addActionRowComponents(part);
+        else if (part instanceof MediaGalleryBuilder) c.addMediaGalleryComponents(part);
         else throw new Error(`Unsupported panel part: ${part?.constructor?.name}`);
     }
     return c;
@@ -72,4 +81,4 @@ function panelPayload(containerBuilder, { convert = false } = {}) {
     return payload;
 }
 
-module.exports = { text, separator, button, linkButton, row, section, container, panelPayload, ButtonStyle };
+module.exports = { text, separator, button, linkButton, row, gallery, section, container, panelPayload, ButtonStyle };

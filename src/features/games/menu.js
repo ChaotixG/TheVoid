@@ -29,7 +29,7 @@ const winnerCoins = (r) => `${r.winner} for the winner, +${r.perOpponent} per op
 // starting (first choice is the default); `opponent` adds a "who to play" picker (empty = me).
 // Games with either get Set up (choices, then Start); the rest start in one click. Coin amounts
 // come from config/games.js.
-const CATALOG = [
+const ALL_GAMES = [
     {
         id: 'wordle', name: 'Wordle', emoji: '🟩', category: 'solo',
         short: 'Guess the five-letter word',
@@ -112,6 +112,13 @@ const CATALOG = [
         coins: `${REWARDS.scramble.perWord} per word, +${REWARDS.scramble.winnerBonus} for the winner`,
     },
     {
+        id: 'wordTiles', name: 'Word Tiles', emoji: '🔠', category: 'party', hidden: !gameConfig.WORD_TILES_ENABLED,
+        short: 'The classic crossword tile game',
+        about: 'The classic crossword tile game: build words on the board from your 7 letter tiles. Bonus squares, 50 extra points for using all 7 tiles at once, and the highest score wins.',
+        players: players('wordTiles'),
+        coins: `1 per ${REWARDS.wordTiles.pointsPerCoin} points, ${winnerCoins(REWARDS.wordTiles)}`,
+    },
+    {
         id: 'higherLower', name: 'Higher or Lower', emoji: '🔼', category: 'party',
         short: 'Guess if the next number is higher or lower',
         about: 'Everyone guesses whether the next number is higher or lower. Guess wrong and you\'re out; the last one standing wins.',
@@ -119,6 +126,9 @@ const CATALOG = [
         coins: `${REWARDS.higherLower.perRound} per round survived, ${winnerCoins(REWARDS.higherLower)}`,
     },
 ];
+
+// Games that aren't ready yet (`hidden`) aren't offered anywhere
+const CATALOG = ALL_GAMES.filter(g => !g.hidden);
 
 // ─── Choices ↔ custom IDs ────────────────────────────────────
 // Option values (and the opponent) in a fixed order, joined with "."

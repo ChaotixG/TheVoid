@@ -24,6 +24,7 @@ module.exports = {
         higherLower: { perRound: 2, winner: 15, perOpponent: 3 },
         crazyEights: { winner: 20, perOpponent: 8, runnerUp: 8 },
         liarsDice: { winner: 20, perOpponent: 8, runnerUp: 8 },
+        wordTiles: { winner: 25, perOpponent: 10, pointsPerCoin: 25 }, // plus 1 coin per 25 points scored
     },
 
     IDLE_MINUTES: 10,       // a game ends after this long without a move
@@ -45,5 +46,9 @@ module.exports = {
         wordChain: { minPlayers: 2, maxPlayers: 12, turnSeconds: 30, minTurnSeconds: 10, minLength: 3 },
         scramble: { minPlayers: 2, maxPlayers: 20, rounds: 10, roundSeconds: 30, pauseSeconds: 3 },
         higherLower: { minPlayers: 2, maxPlayers: 20, guessSeconds: 15, maxRounds: 15 },
+        wordTiles: { minPlayers: 2, maxPlayers: 4, turnSeconds: 180, missedTurnsOut: 2 }, // out after 2 timeouts in a row
     },
+
+    // Word Tiles is offered in the menu (its board picture was approved)
+    WORD_TILES_ENABLED: true,
 };

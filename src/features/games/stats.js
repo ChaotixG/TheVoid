@@ -17,10 +17,11 @@ const BEST = {
     wordChain: { show: (n) => plural(n, 'word') },
     scramble: { show: (n) => plural(n, 'word') },
     higherLower: { show: (n) => `${n} right` },
+    wordTiles: { show: (n) => plural(n, 'point') },
 };
 
 // Games with a winner (the rest only count games played and the best score)
-const HAS_WINS = new Set(['tictactoe', 'connect4', 'triviaParty', 'crazyEights', 'liarsDice', 'wordChain', 'scramble', 'higherLower']);
+const HAS_WINS = new Set(['tictactoe', 'connect4', 'triviaParty', 'crazyEights', 'liarsDice', 'wordChain', 'scramble', 'higherLower', 'wordTiles']);
 
 /**
  * Records a finished game for everyone in `game.players` (the bot opponent isn't counted).

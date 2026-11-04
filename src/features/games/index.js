@@ -18,6 +18,7 @@ const GAMES = {
     wordChain: require('./wordChain'),
     scramble: require('./scramble'),
     higherLower: require('./higherLower'),
+    wordTiles: require('./wordTiles'),
 };
 
 const ENDED = 'This game has ended. Start a new one with **/games**!';
