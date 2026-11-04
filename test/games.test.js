@@ -95,7 +95,7 @@ test('wordle scores repeated letters like the real game', () => {
 });
 
 test('word lists are real dictionary words of the right length', () => {
-    const dictionary = new Set(fs.readFileSync(require('word-list').default ?? require('word-list'), 'utf8').split('\n'));
+    const dictionary = { has: require('../src/features/games/words').isWord };
     assert.ok(WORDLE_ANSWERS.every(w => /^[a-z]{5}$/.test(w) && dictionary.has(w)));
     assert.equal(new Set(WORDLE_ANSWERS).size, WORDLE_ANSWERS.length, 'no duplicates');
     assert.ok(HANGMAN_WORDS.every(w => /^[a-z]{5,10}$/.test(w) && dictionary.has(w)));

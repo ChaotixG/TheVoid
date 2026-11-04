@@ -1,6 +1,8 @@
 // Word lists for Wordle, Hangman and Scramble. Answers are hand-picked common words (a test checks
-// every one is in the dictionary); guesses are checked against the full dictionary from `word-list`.
+// every one is in the dictionary); guesses and played words are checked against the dictionary in
+// wordlists/dictionary.txt (one word per line, so words can simply be added there).
 const fs = require('fs');
+const path = require('path');
 const { randomInt } = require('crypto');
 
 const WORDLE_ANSWERS = `
@@ -57,25 +59,26 @@ unicorn volcano weather whistle alphabet backpack birthday building calendar cam
 football hospital keyboard mountain notebook sandwich sunshine treasure umbrella vacation
 `.trim().split(/\s+/);
 
-let dictionary = null; // Set of 5-letter words, loaded on first use
-function fiveLetterWords() {
-    if (!dictionary) {
-        const wordListPath = require('word-list').default ?? require('word-list');
-        dictionary = new Set(fs.readFileSync(wordListPath, 'utf8').split('\n').filter(w => /^[a-z]{5}$/.test(w)));
-        for (const word of WORDLE_ANSWERS) dictionary.add(word);
+let allWords = null; // Set of every dictionary word, loaded on first use
+function dictionary() {
+    if (!allWords) {
+        const text = fs.readFileSync(path.join(__dirname, 'wordlists', 'dictionary.txt'), 'utf8');
+        allWords = new Set(text.split(/\r?\n/).map(line => line.trim().toLowerCase()).filter(w => /^[a-z]+$/.test(w)));
     }
-    return dictionary;
+    return allWords;
 }
 
-let allWords = null; // Set of every dictionary word, loaded on first use (Word Chain, Scramble)
-/** Whether a lowercase word is in the dictionary */
-function isWord(word) {
-    if (!allWords) {
-        const wordListPath = require('word-list').default ?? require('word-list');
-        allWords = new Set(fs.readFileSync(wordListPath, 'utf8').split('\n').filter(Boolean));
+let fiveLetters = null; // the dictionary's 5-letter words (Wordle guesses), plus every answer
+function fiveLetterWords() {
+    if (!fiveLetters) {
+        fiveLetters = new Set([...dictionary()].filter(w => w.length === 5));
+        for (const word of WORDLE_ANSWERS) fiveLetters.add(word);
     }
-    return allWords.has(word);
+    return fiveLetters;
 }
+
+/** Whether a lowercase word is in the dictionary */
+const isWord = (word) => dictionary().has(word);
 
 const isValidGuess = (word) => fiveLetterWords().has(word);
 const pick = (list) => list[randomInt(list.length)];
