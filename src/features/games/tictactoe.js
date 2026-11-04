@@ -4,6 +4,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { BOT, gamePayload, updateBoard, mention, refuseOutsider, challengePayload, pingOpponent, armChallengeTimer, handleChallenge, showGame } = require('./common');
 
 const TITLE = '❌⭕ Tic-tac-toe';
@@ -88,6 +89,7 @@ async function finish(game, interaction, { winnerId = null, forfeitBy = null, li
         const reward = game.players.includes(BOT) ? REWARDS.tictactoe.vsBot : REWARDS.tictactoe.vsPlayer;
         game.reward = await payGameReward(winnerId, reward, { guildId: game.guildId, game: 'Tic-tac-toe' });
     }
+    await recordGame(game, { winners: winnerId ? [winnerId] : [] });
     await updateBoard(game, interaction, render(game));
 }
 

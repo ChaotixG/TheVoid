@@ -1,11 +1,12 @@
 // Crazy Eights: match the top card's color or number, or play a wild and choose the color.
 // ⏭️ Skip, 🔁 Reverse, +2 and 🌈+4 hit the next player. Cards are private: "My hand" opens a view
-// only you can see, and you play from there. First to empty their hand wins.
+// only you can see (it keeps itself up to date), and you play from there. First to empty their
+// hand wins. Public text never names a card in anyone's hand, only cards as they're played.
 //
 // Cards are short codes so they fit in custom IDs: a color letter and a value ("r7", "bs" blue
 // Skip, "gr" green Reverse, "yd" yellow +2), or "w" / "w4" for the wilds.
 const { randomInt } = require('crypto');
-const { MessageFlags, StringSelectMenuBuilder } = require('discord.js');
+const { StringSelectMenuBuilder } = require('discord.js');
 const { PARTY, REWARDS } = require('../../config/games');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { getGame, endGame, runExclusive, touch } = require('./sessions');
@@ -13,6 +14,9 @@ const { gamePayload, editGame, notify } = require('./common');
 const { openLobby, handleLobby, LOBBY_ACTIONS } = require('./lobby');
 const { winnerReward } = require('./scoring');
 const { payEach } = require('./rewards');
+const { openView, trackView, refreshViews, dropView } = require('./privateViews');
+const { announceTurn } = require('./turns');
+const { recordGame } = require('./stats');
 
 const TITLE = '🎴 Crazy Eights';
 const COLOR = 0xE67E22;
@@ -108,6 +112,7 @@ function startTurn(game, seat) {
     const { turnSeconds } = settings();
     game.turnEndsAt = Date.now() + turnSeconds * 1000;
     game.timer = setTimeout(() => runExclusive(game, () => timeUp(game, turnId)), turnSeconds * 1000);
+    announceTurn(game, game.players[seat]);
 }
 
 const advance = (game, steps = 1) => startTurn(game, seatAfter(game, steps));
@@ -177,7 +182,10 @@ async function timeUp(game, turnId) {
     if (missed >= MISSED_TURNS_OUT) {
         addLog(game, `⌛ <@${userId}> ran out of time ${MISSED_TURNS_OUT} turns in a row and is out`);
         removePlayer(game, userId, 'timed out');
-    } else if (game.drawn) {
+        await afterMove(game); // their open hand says they're out…
+        return dropView(game, userId); // …and then stops updating
+    }
+    if (game.drawn) {
         addLog(game, `⌛ <@${userId}> ran out of time and passed`);
         advance(game);
     } else {
@@ -210,10 +218,17 @@ async function payOut(game) {
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Crazy Eights' });
 }
 
-// After a move: pay out if it ended the game, and show it on the game message
-async function afterMove(game) {
-    if (game.state === 'over') await payOut(game);
+// After a move: settle up if it ended the game, then show it on the game message and in everyone's
+// open hand. `except` is the player whose view their own click just updated; at the end every open
+// view is redrawn, so the winner's shows their coins too.
+async function afterMove(game, { except = null } = {}) {
+    if (game.state === 'over') {
+        await payOut(game);
+        // Everyone who started counts as having played, so leaving a lost game doesn't hide the loss
+        await recordGame({ id: game.id, type: game.type, players: game.started }, { winners: [game.winner] });
+    }
     await editGame(game, render(game));
+    await refreshViews(game, handView, { except: game.state === 'over' ? null : except });
 }
 
 function begin(game) {
@@ -235,6 +250,7 @@ function begin(game) {
     game.onExpire = () => {
         game.state = 'over';
         game.expired = true;
+        refreshViews(game, handView); // open hands say so too (not awaited: this returns the board)
         return render(game);
     };
     startTurn(game, 0); // the host goes first
@@ -253,30 +269,33 @@ async function handle(game, interaction, action, arg) {
     }
 
     if (action === 'hand') {
-        if (!game.players.includes(userId)) {
-            return notify(interaction, game.out.has(userId) ? 'You\'re out of this game.' : 'You\'re not in this game. Join the next one!');
-        }
-        // Not touch(game, interaction): this click is answered with a new private message, so its
-        // token couldn't edit the game message later
-        touch(game);
-        return interaction.reply({ ...handView(game, userId), flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2 });
+        if (!game.players.includes(userId)) return notify(interaction, outLine(game, userId));
+        return openView(game, interaction, handView(game, userId));
     }
 
-    // Everything else comes from someone's private view of their hand, which may be out of date:
-    // each click is checked against the game as it is now and answered with a fresh view
-    if (!game.players.includes(userId)) {
-        return interaction.update(closedView(game.out.has(userId) ? 'You\'re out of this game.' : 'You\'re not in this game.'));
-    }
+    // Everything else comes from someone's private view of their hand. Views update themselves,
+    // but a click can still race a move, so each one is checked against the game as it is now.
+    if (!game.players.includes(userId)) return interaction.update(closedView(outLine(game, userId)));
     touch(game, interaction);
-    const refresh = (note) => interaction.update(handView(game, userId, { note }));
+    if (action !== 'quit') pendingOf(game).delete(userId); // any other click moves on from a question
+    // Answers in the private view, and keeps that view updating as the game moves on
+    const answer = async (payload) => {
+        await interaction.update(payload);
+        trackView(game, interaction);
+    };
+    const refresh = (note) => answer(handView(game, userId, { note }));
 
     if (action === 'view') return refresh();
-    if (action === 'quit') return interaction.update(quitView(game));
+    if (action === 'quit') {
+        pendingOf(game).set(userId, { quit: true });
+        return answer(quitView(game));
+    }
     if (action === 'quitYes') {
         addLog(game, `🚪 <@${userId}> left the game`);
         removePlayer(game, userId, 'left');
         await interaction.update(closedView('You left the game. Your cards went back into the deck.'));
-        return afterMove(game);
+        dropView(game, userId);
+        return afterMove(game, { except: userId });
     }
     if (!['play', 'color', 'draw', 'pass'].includes(action)) return interaction.deferUpdate();
     if (current(game) !== userId) return refresh(`It's <@${current(game)}>'s turn, not yours.`);
@@ -305,13 +324,16 @@ async function handle(game, interaction, action, arg) {
         if (problem) return refresh(problem);
         const color = action === 'color' ? interaction.values?.[0] : null;
         // A wild is played once its color is chosen
-        if (isWild(card) && !COLORS[color]) return interaction.update(handView(game, userId, { choosing: card }));
+        if (isWild(card) && !COLORS[color]) {
+            pendingOf(game).set(userId, { choosing: card });
+            return answer(handView(game, userId, { choosing: card }));
+        }
         playCard(game, card, color);
         note = game.state === 'over' ? '🏆 You played your last card and won!' : `You played ${show(card)}.`;
     }
     game.timeouts.set(userId, 0); // they're here, so missed turns count from zero again
     await refresh(note);
-    return afterMove(game);
+    return afterMove(game, { except: userId });
 }
 
 // Why the current player can't play `card` right now, or null if they can
@@ -331,12 +353,35 @@ function cardButton(game, card) {
     return button(`game:${game.id}:play:${card}`, NAMES[valueOf(card)] ?? valueOf(card), color?.style ?? ButtonStyle.Secondary, { emoji: color?.emoji ?? '🌈' });
 }
 
+// Why someone can't open or use a hand in this game
+function outLine(game, userId) {
+    const reason = game.out.get(userId);
+    if (reason === 'timed out') return `You ran out of time ${MISSED_TURNS_OUT} turns in a row, so you're out of this game.`;
+    return reason ? 'You\'re out of this game.' : 'You\'re not in this game. Join the next one!';
+}
+
+// What someone's view is in the middle of (the Leave question, or a wild waiting for its color),
+// so the refresh after another player's move shows that instead of throwing it away
+const pendingOf = (game) => (game.pending ??= new Map()); // userId → { quit } or { choosing: card }
+
 /** Someone's private view of their hand. `choosing` is a wild waiting for its color. */
 function handView(game, userId, { note = null, choosing = null } = {}) {
+    if (!game.players.includes(userId)) return closedView(outLine(game, userId));
+    const pending = game.pending?.get(userId);
+    if (game.state !== 'over' && pending?.quit) return quitView(game);
+    // A wild still waiting for its color, while it's still their turn and their card
+    if (!choosing && pending?.choosing && current(game) === userId && game.hands.get(userId).includes(pending.choosing)) {
+        choosing = pending.choosing;
+    }
     const hand = sorted(game.hands.get(userId));
     const parts = [`### 🎴 Your hand · ${cardCount(hand.length)}`, note];
     if (game.state === 'over') {
-        parts.push('-# Your coins are shown on the game message.');
+        const coins = game.rewards?.get(userId);
+        let result;
+        if (game.expired) result = '⌛ The game ended: no moves for 10 minutes.';
+        else if (game.winner === userId) result = '🏆 **You won!**';
+        else result = `The game is over · <@${game.winner}> won.`;
+        parts.push(`${result}${coins ? ` · ${coins}` : ''}`);
         return gamePayload(parts, COLOR);
     }
 
@@ -439,8 +484,8 @@ function start(interaction) {
     }, { begin, render });
 }
 
-// Only lobby clicks wait in line already acknowledged: everything else is answered right away,
-// mostly by updating someone's private view
-const deferActions = new Set(LOBBY_ACTIONS);
+// Lobby clicks and My hand (answered with a private follow-up) are acknowledged before waiting in
+// line; clicks inside a private view are answered right away by updating that view
+const deferActions = new Set([...LOBBY_ACTIONS, 'hand']);
 
 module.exports = { start, handle, render, deferActions, TITLE, newDeck, shuffle, canPlay, show };

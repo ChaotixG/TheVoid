@@ -9,12 +9,16 @@ const { container, separator, row, section, button, panelPayload, ButtonStyle } 
 const { ephemeral } = require('../../utils/interactionReplies');
 const { hangmanReward, minesweeperReward, connect4Reward } = require('./scoring');
 const { gameCoinsToday } = require('./rewards');
-const { games } = require('./sessions');
+const { games, finished } = require('./sessions');
 const { BOT } = require('./common');
+const { cannotHost, playerList } = require('./lobby');
+const { cannotListen } = require('./chat');
+const { statsFor } = require('./stats');
 const { GAMES } = require('./index');
 
 const COLOR = 0x5865F2;
 const CATEGORIES = { solo: { name: 'Solo', emoji: '🎯' }, versus: { name: 'Versus', emoji: '⚔️' }, party: { name: 'Party', emoji: '🎉' } };
+const TABS = { ...CATEGORIES, stats: { name: 'Stats', emoji: '📊' } };
 
 const DIFFICULTY = { key: 'difficulty', choices: [['any', 'Any difficulty'], ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']] };
 const players = (type) => `${PARTY[type].minPlayers}–${PARTY[type].maxPlayers} players`;
@@ -93,14 +97,14 @@ const CATALOG = [
         coins: `${winnerCoins(REWARDS.liarsDice)}, ${REWARDS.liarsDice.runnerUp} for second`,
     },
     {
-        id: 'wordChain', name: 'Word Chain', emoji: '🔗', category: 'party',
+        id: 'wordChain', name: 'Word Chain', emoji: '🔗', category: 'party', chat: true,
         short: 'Words starting with the last letter',
         about: 'Take turns typing a real word in chat that starts with the last letter of the previous word. Run out of time and you\'re out.',
         players: players('wordChain'),
         coins: `${REWARDS.wordChain.perWord} per word, ${winnerCoins(REWARDS.wordChain)}`,
     },
     {
-        id: 'scramble', name: 'Scramble', emoji: '🔤', category: 'party',
+        id: 'scramble', name: 'Scramble', emoji: '🔤', category: 'party', chat: true,
         short: 'Unscramble the word first, in chat',
         about: `I post a scrambled word; the first player to type the answer in chat scores. ${PARTY.scramble.rounds} rounds.`,
         players: players('scramble'),
@@ -178,33 +182,42 @@ function setupView(ownerId, entry, chosen) {
     return parts;
 }
 
+// The Stats tab: the owner's record in each game they've finished, across all servers
+function statsView(stats) {
+    const lines = CATALOG.filter(g => stats.has(g.id)).map(g => `${g.emoji} **${g.name}** · ${stats.get(g.id)}`);
+    return [lines.length
+        ? `### 📊 Your stats\n${lines.join('\n')}\n-# Across every server.`
+        : '### 📊 Your stats\nNo finished games yet. Pick one from the other tabs!'];
+}
+
 /**
- * The menu: a tab of games, or one game's setup. `coinsToday` (game coins won today) is shown in
- * the header when given.
+ * The menu: a tab of games, one game's setup, or the Stats tab. `coinsToday` (game coins won today)
+ * is shown in the header when given; `stats` (from statsFor) fills the Stats tab.
  */
-function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notice = null, coinsToday = null } = {}) {
+function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notice = null, coinsToday = null, stats = new Map() } = {}) {
     const entry = CATALOG.find(g => g.id === gameId);
-    const current = entry?.category ?? (CATEGORIES[tab] ? tab : 'solo');
+    const current = entry?.category ?? (TABS[tab] ? tab : 'solo');
     const parts = [
         `## 🎮 Games\n-# <@${ownerId}>'s menu · only they can use it` +
         (coinsToday === null ? '' : ` · game coins today: ${coinsToday}/${DAILY_CAP}`),
         notice ? `-# ${notice}` : null,
         row(
-            ...Object.entries(CATEGORIES).map(([id, c]) =>
+            ...Object.entries(TABS).map(([id, c]) =>
                 button(`games:tab:${ownerId}:${id}`, c.name, id === current ? ButtonStyle.Primary : ButtonStyle.Secondary, { emoji: c.emoji })),
             button(`games:close:${ownerId}`, 'Close'),
         ),
         separator(),
-        ...(entry
-            ? setupView(ownerId, entry, values ?? defaults(entry))
-            : CATALOG.filter(g => g.category === current).map(g => gameSection(ownerId, g))),
+        ...(entry ? setupView(ownerId, entry, values ?? defaults(entry))
+            : current === 'stats' ? statsView(stats)
+                : CATALOG.filter(g => g.category === current).map(g => gameSection(ownerId, g))),
     ];
     return { ...panelPayload(container(parts, COLOR)), allowedMentions: { parse: [] } };
 }
 
-// The menu with the owner's game coins for today
+// The menu with the owner's game coins for today (and their stats, on the Stats tab)
 async function menuView(ownerId, view) {
-    return renderMenu(ownerId, { ...view, coinsToday: await gameCoinsToday(ownerId) });
+    const [coinsToday, stats] = await Promise.all([gameCoinsToday(ownerId), view.tab === 'stats' ? statsFor(ownerId) : new Map()]);
+    return renderMenu(ownerId, { ...view, coinsToday, stats });
 }
 
 // ─── Menu lifetime ───────────────────────────────────────────
@@ -233,16 +246,70 @@ function forgetMenu(messageId) {
 }
 
 // ─── Interactions ─────────────────────────────────────────────
-// `/games game:<id>` opens on that game: its setup if it has choices, otherwise its tab
+// The game a start function just set up from this interaction (it touches the game with it)
+const startedBy = (interaction) => [...games.values()].find(g => g.lastInteraction === interaction);
+
+// What Play again (or Rematch) on the finished game will start
+function setReplay(game, entry, values) {
+    game.replay = { type: entry.id, state: encode(entry, values), rematch: entry.category === 'party' };
+}
+
+// Opens a menu for whoever used /games (`game:<id>` opens on that game: its setup if it has
+// choices, otherwise its tab) or pressed Games on a finished game
 async function openMenu(interaction) {
-    const entry = CATALOG.find(g => g.id === interaction.options.getString('game'));
+    const entry = CATALOG.find(g => g.id === interaction.options?.getString?.('game'));
     const view = entry ? (hasChoices(entry) ? { gameId: entry.id } : { tab: entry.category }) : {};
     const response = await interaction.reply({ ...await menuView(interaction.user.id, view), withResponse: true });
     keepMenu(response?.resource?.message?.id, interaction);
 }
 
+/**
+ * Play again / Rematch on a finished game: anyone can press it, and the new game (or lobby) gets
+ * its own message below. When one of the game's players presses it, the others are invited back,
+ * once: a party lobby pings them to press Join (nobody is ever added without choosing to), and a
+ * two-player rematch challenges the other player. Anyone else gets a game of their own.
+ */
+async function playAgain(interaction, type, finishedId, state = '') {
+    const entry = CATALOG.find(g => g.id === type);
+    if (!entry) return interaction.deferUpdate();
+    const userId = interaction.user.id;
+
+    // Refusals come first, while they can still be private: after the deferred reply below,
+    // Discord would turn the first notice into that public message
+    const problem = (entry.category === 'party' && cannotHost(interaction)) || (entry.chat && cannotListen(interaction));
+    if (problem) return interaction.reply(ephemeral(problem));
+
+    const previous = finished.get(finishedId)?.players ?? [];
+    const others = previous.includes(userId) ? previous.filter(id => id !== userId && id !== BOT) : [];
+    if (others.length) finished.delete(finishedId); // invited back once, however often it's pressed
+    const values = decode(entry, state);
+    if (entry.opponent && values.opponentId !== BOT) values.opponentId = others[0] ?? BOT;
+
+    await interaction.deferReply();
+    await GAMES[entry.id].start(interaction, values);
+    const game = startedBy(interaction);
+    if (!game) {
+        // It couldn't start (e.g. no trivia questions right now) and said why; tidy up shortly after
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000).unref?.();
+        return;
+    }
+    setReplay(game, entry, values);
+
+    if (game.state === 'lobby' && others.length) {
+        await interaction.followUp({
+            content: `${playerList(others)}, <@${userId}> wants a rematch! Press **Join** above to play again.`,
+            allowedMentions: { users: others },
+        });
+    }
+}
+
 async function handleInteraction(client, interaction) {
-    const [, action, ownerId, gameId, ...rest] = interaction.customId.split(':');
+    const [, action, ...args] = interaction.customId.split(':');
+    // Buttons on finished games work for anyone
+    if (action === 'again') return playAgain(interaction, ...args);
+    if (action === 'menu') return openMenu(interaction);
+
+    const [ownerId, gameId, ...rest] = args;
     if (interaction.user.id !== ownerId) return interaction.reply(ephemeral('This menu isn\'t yours. Open your own with **/games**!'));
     const messageId = interaction.message?.id;
     const entry = CATALOG.find(g => g.id === gameId);
@@ -257,11 +324,14 @@ async function handleInteraction(client, interaction) {
         // A second click (while the first is still starting, e.g. fetching questions) is ignored
         if (starting.has(messageId) || gameOn(messageId)) return interaction.deferUpdate();
         starting.add(messageId);
+        const values = decode(entry, action === 'start' ? rest[0] : '');
         try {
-            await GAMES[entry.id].start(interaction, decode(entry, action === 'start' ? rest[0] : ''));
+            await GAMES[entry.id].start(interaction, values);
         } finally {
             starting.delete(messageId);
         }
+        const game = startedBy(interaction);
+        if (game) setReplay(game, entry, values);
         // Started: the menu is now the game. Not started: it stays a menu. If this click was answered
         // with a private notice (its reply isn't the menu), the earlier cleanup timer still applies.
         if (gameOn(messageId)) forgetMenu(messageId);

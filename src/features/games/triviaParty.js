@@ -8,6 +8,7 @@ const { gamePayload, editGame, notify } = require('./common');
 const { openLobby, handleLobby, LOBBY_ACTIONS } = require('./lobby');
 const { nextQuestion } = require('./trivia');
 const { payEach } = require('./rewards');
+const { recordGame } = require('./stats');
 
 const TITLE = '🎉 Trivia Party';
 const COLOR = 0xEB459E;
@@ -87,6 +88,10 @@ async function finish(game, note = null) {
         amount: s.coins + (best > 0 && s.points === best ? REWARDS.triviaParty.winnerBonus : 0), // a tie shares the win
     }));
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Trivia Party' });
+    await recordGame(game, {
+        winners: best > 0 ? game.ranking.filter(([, s]) => s.points === best).map(([userId]) => userId) : [],
+        scores: Object.fromEntries(game.ranking.map(([userId, s]) => [userId, s.points])),
+    });
 }
 
 // Shows how many have answered, without editing the message on every single click

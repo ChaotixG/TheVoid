@@ -31,6 +31,7 @@ module.exports = {
     TRIVIA_SECONDS: 20,     // time to answer a trivia question
     MENU_MINUTES: 5,        // an unused /games menu is removed after this long
     LOBBY_SECONDS: 180,     // a party lobby starts by itself after this (or closes, if too few joined)
+    TURN_PING_SECONDS: 10,  // whoever's turn it is gets a ping if they haven't moved after this long
 
     MINESWEEPER: { size: 5, mines: 4 },
     WORDLE: { guesses: 6 },

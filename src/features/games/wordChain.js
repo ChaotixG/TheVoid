@@ -11,6 +11,8 @@ const { listen, cannotListen } = require('./chat');
 const { isWord } = require('./words');
 const { winnerReward } = require('./scoring');
 const { payEach } = require('./rewards');
+const { announceTurn } = require('./turns');
+const { recordGame } = require('./stats');
 
 const TITLE = '🔗 Word Chain';
 const COLOR = 0x57F287;
@@ -52,6 +54,9 @@ function startTurn(game, userId) {
     game.turnEndsAt = Date.now() + seconds * 1000;
     const turn = game.turn;
     game.timer = setTimeout(() => runExclusive(game, () => timeUp(game, turn)), seconds * 1000);
+    // Pings them if they haven't played after a few seconds. Set after the turn timer, so a ping due
+    // just as time runs out is cancelled by the next turn instead of going out.
+    announceTurn(game, userId);
 }
 
 // The next player still in, in lobby order; going past the end of the list starts a new round
@@ -87,6 +92,7 @@ function isValid(game, word) {
 
 // Only the current player's messages count; they can keep trying until their time runs out
 async function onMessage(game, message) {
+    if (message.author.bot) return; // never the bot's own turn pings
     if (game.state !== 'playing' || message.author.id !== game.current) return;
     touch(game);
     const word = message.content.trim().toLowerCase();
@@ -118,6 +124,7 @@ async function finish(game, { winner = null, note = null } = {}) {
         amount: perWord * Math.min(game.words.get(userId), maxWords) + (userId === winner ? winnerReward('wordChain', game.players.length) : 0),
     }));
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Word Chain' });
+    await recordGame(game, { winners: winner ? [winner] : [], scores: Object.fromEntries(game.words) });
 }
 
 // ─── Clicks ───────────────────────────────────────────────────

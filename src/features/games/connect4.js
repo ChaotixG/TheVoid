@@ -4,6 +4,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { BOT, gamePayload, updateBoard, mention, refuseOutsider, challengePayload, pingOpponent, armChallengeTimer, handleChallenge, showGame } = require('./common');
 
 const TITLE = '🔴🟡 Connect Four';
@@ -122,6 +123,7 @@ async function finish(game, interaction, { winnerId = null, forfeitBy = null, ce
         const moves = game.board.flat().filter(p => p === winnerIndex).length;
         game.reward = await payGameReward(winnerId, connect4Reward(moves, game.players.includes(BOT)), { guildId: game.guildId, game: 'Connect Four' });
     }
+    await recordGame(game, { winners: winnerId ? [winnerId] : [] });
     await updateBoard(game, interaction, render(game));
 }
 

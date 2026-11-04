@@ -3,19 +3,22 @@ const assert = require('node:assert/strict');
 const { MessageFlags } = require('discord.js');
 const { startDatabase, stopDatabase, clearDatabase, inspectPanel } = require('./helpers');
 
-// Short reveals so rounds can be played through quickly; turns stay long unless a test shortens them
+// Short reveals so rounds can be played through quickly; turns (and "your turn" pings) stay long
+// unless a test shortens them
 const gameConfig = require('../src/config/games');
 const SETTINGS = gameConfig.PARTY.liarsDice;
 Object.assign(SETTINGS, { turnSeconds: 60, revealSeconds: 0.05 });
+gameConfig.TURN_PING_SECONDS = 60;
 
 const Wallet = require('../src/models/Wallet');
+const GameStats = require('../src/models/GameStats');
 const { games } = require('../src/features/games/sessions');
 const gamesRouter = require('../src/features/games');
 const menu = require('../src/features/games/menu');
 const liarsDice = require('../src/features/games/liarsDice');
 
 const clearGames = () => {
-    for (const g of games.values()) clearTimeout(g.timer);
+    for (const g of games.values()) { clearTimeout(g.timer); clearTimeout(g.pingTimer); }
     games.clear();
 };
 
@@ -39,10 +42,15 @@ const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.b
 const text = (payload) => JSON.stringify(payload.components.map(c => c.toJSON()));
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Every edit of the shared game message, from any interaction, in order
-let screens = [];
-beforeEach(() => { screens = []; });
+let screens = [];      // every edit of the shared game message, from any interaction, in order
+let views = new Map(); // userId → what their private view showed, in order
+let posts = [];        // public follow-ups (turn pings)
+let deleted = [];      // follow-ups deleted again
+beforeEach(() => { screens = []; views = new Map(); posts = []; deleted = []; });
 const latest = () => text(screens.at(-1));
+const showView = (userId, p) => views.set(userId, [...(views.get(userId) ?? []), p]);
+const viewOf = (userId) => text(views.get(userId).at(-1));
+const KEYCAP = /\d️⃣/; // a dice face: 1️⃣ to 6️⃣
 
 // A button on the latest board, by its action
 function boardButton(action) {
@@ -57,9 +65,10 @@ function boardButton(action) {
 
 // A stand-in interaction that records what the bot answered. By default it's a click on the game
 // message (m1); `modal` makes it a form submit from that message, `ephemeral` a click in a private view.
+let messageIds = 0;
 function fake({ userId = 'p1', customId, fields = {}, modal = false, ephemeral = false } = {}) {
     const calls = { replies: [], shown: [], modal: null };
-    const show = (p) => { calls.shown.push(p); if (!ephemeral) screens.push(p); };
+    const show = (p) => { calls.shown.push(p); if (ephemeral) showView(userId, p); else screens.push(p); };
     const i = {
         user: { id: userId }, guildId: 'g1', channelId: 'c1', customId,
         message: { id: ephemeral ? 'e1' : 'm1', flags: { has: (f) => ephemeral && f === MessageFlags.Ephemeral }, edit: async (p) => show(p) },
@@ -73,9 +82,17 @@ function fake({ userId = 'p1', customId, fields = {}, modal = false, ephemeral =
         update: async (p) => { show(p); i.replied = true; },
         deferUpdate: async () => { i.deferred = true; },
         editReply: async (p) => { show(p); },
-        followUp: async (p) => { calls.replies.push(p); },
+        followUp: async (p) => {
+            calls.replies.push(p);
+            if (!(p.flags & MessageFlags.Ephemeral)) posts.push(p);
+            else if (p.components) showView(userId, p); // a private view (openView)
+            return { id: `f${++messageIds}` };
+        },
+        webhook: { editMessage: async (id, p) => showView(userId, p) }, // redrawing a view opened by this click
+        deleteReply: async (id) => { deleted.push(id); },
         showModal: async (m) => { calls.modal = m; i.replied = true; },
     };
+    calls.interaction = i;
     return { i, calls };
 }
 // Routes like the interaction router, but lets errors through so a failing test shows them
@@ -257,7 +274,12 @@ test('liar\'s dice: a full game: out players are skipped, the last with dice win
         assert.equal(await balanceOf('p3'), winnerCoins);
         assert.equal(await balanceOf('p2'), r.runnerUp);
         assert.equal(await balanceOf('p1'), 0);
+
+        // Stats: one game played for everyone, one win for p3
+        const stats = await GameStats.find({ game: 'liarsDice' }).lean();
+        assert.deepEqual(stats.map(s => [s.userId, s.played, s.wins]).sort(), [['p1', 1, 0], ['p2', 1, 0], ['p3', 1, 1]]);
         assert.match(notice(await click(game, 'p3', 'bid')), /has ended/);
+        assert.equal((await GameStats.findOne({ userId: 'p3', game: 'liarsDice' }).lean()).played, 1, 'recorded once');
     } finally {
         SETTINGS.dice = 5;
     }
@@ -267,37 +289,150 @@ test('liar\'s dice: a full game: out players are skipped, the last with dice win
 test('liar\'s dice: your dice are private; leaving knocks you out and rerolls, and the last one in wins', async () => {
     planned = { p1: [2, 2, 2, 2, 2], p2: [3, 3, 3, 3, 3], p3: [4, 4, 4, 4, 4] };
     const game = await startGame(['p1', 'p2', 'p3']);
-    const boardToken = game.lastInteraction;
 
     const view = await click(game, 'p1', 'dice');
     const reply = view.replies[0];
     assert.equal(reply.flags, MessageFlags.Ephemeral | MessageFlags.IsComponentsV2);
     assert.match(text(reply), /2️⃣ 2️⃣ 2️⃣ 2️⃣ 2️⃣/);
     assert.match(text(reply), /:quit"/);
-    assert.doesNotMatch(latest(), /3️⃣ 3️⃣/, 'nobody\'s dice are on the board');
-    assert.equal(game.lastInteraction, boardToken, 'a private reply doesn\'t replace the board\'s token');
+    assert.equal(game.lastInteraction, view.interaction, 'opening your dice is acknowledged on the board, which renews its token');
     assert.match(notice(await click(game, 'p9', 'dice')), /not in this game/);
 
     await bid(game, 'p1', 2, 3);
-    const left = await clickPrivate(game, 'p3', 'quit');
+    await clickPrivate(game, 'p3', 'quit');
+    assert.equal(game.dice.get('p3'), 5, 'Leave game asks first');
+    const left = await clickPrivate(game, 'p3', 'quityes');
     assert.match(text(left.shown[0]), /You left the game/);
+    assert.equal(game.views.has('p3'), false, 'a leaver\'s view stops updating');
     assert.equal(game.dice.get('p3'), 0);
     assert.equal(game.round, 2, 'the dice changed, so everyone rolled again');
     assert.equal(game.bid, null);
     assert.equal(game.turn, 'p2', 'it stays the turn of whoever was up');
     assert.match(latest(), /💀 ~~<@p3>~~ · left/);
     assert.match(latest(), /<@p3> left the game, so everyone rolled again/);
-    assert.match(notice(await clickPrivate(game, 'p3', 'quit')), /already out/);
+    assert.match(notice(await clickPrivate(game, 'p3', 'quityes')), /already out/);
 
-    await clickPrivate(game, 'p2', 'quit');
+    await clickPrivate(game, 'p2', 'quityes');
     assert.equal(games.size, 0);
     assert.match(latest(), /<@p1> wins!/);
+    assert.match(viewOf('p1'), /You won!/, 'open views show the result too');
     assert.match(latest(), /<@p2> left the game/);
     assert.match(latest(), /🥈 <@p2> · left in round 2/);
     assert.match(latest(), /🥉 <@p3> · left in round 1/);
     assert.equal(await balanceOf('p1'), 0, 'nobody was beaten (they left), so the win pays nothing');
     assert.equal(await balanceOf('p2'), 0, 'leaving forfeits');
     assert.equal(await balanceOf('p3'), 0);
+});
+
+// ─── Live private views ───────────────────────────────────────
+test('liar\'s dice: private views redraw themselves as the game moves on; views too old to edit are dropped', async () => {
+    planned = { p1: [2, 2, 2, 2, 2], p2: [3, 3, 3, 3, 3], p3: [4, 4, 4, 4, 4] };
+    const game = await startGame(['p1', 'p2', 'p3']);
+    const p2Opened = await click(game, 'p2', 'dice');
+    await click(game, 'p1', 'dice');
+    assert.match(viewOf('p1'), /Your dice · round 1/);
+    assert.match(viewOf('p1'), /2️⃣ 2️⃣ 2️⃣ 2️⃣ 2️⃣/);
+    assert.match(viewOf('p1'), /\*\*your turn\*\*/);
+    assert.doesNotMatch(viewOf('p1'), /doesn't update/);
+
+    await bid(game, 'p1', 4, 2);
+    assert.match(viewOf('p2'), /Current bid: \*\*4 × 2️⃣\*\* by <@p1> · \*\*your turn\*\*/, 'a bid redraws everyone\'s view');
+    assert.match(viewOf('p1'), /<@p2>'s turn/);
+
+    // Discord can't edit p2's view any more: it's dropped instead of edited
+    p2Opened.interaction.createdTimestamp = Date.now() - 15 * 60_000;
+    const p2Shown = views.get('p2').length;
+    await click(game, 'p2', 'liar'); // p1's five 2s: the bid was good
+    assert.equal(game.views.has('p2'), false);
+    assert.equal(views.get('p2').length, p2Shown);
+    assert.match(viewOf('p1'), /Round over: <@p2> loses a die · new dice/);
+
+    planned = { p1: [6, 6, 5, 5, 4], p2: [3, 3, 3, 3], p3: [4, 4, 4, 4, 4] };
+    await wait(150);
+    assert.equal(game.round, 2);
+    assert.match(viewOf('p1'), /Your dice · round 2/);
+    assert.match(viewOf('p1'), /4️⃣ 5️⃣ 5️⃣ 6️⃣ 6️⃣/, 'the new dice, without pressing My dice again');
+});
+
+test('liar\'s dice: a click inside a private view keeps that view live (Leave game asks, Stay goes back)', async () => {
+    planned = { p1: [2, 2, 2, 2, 2], p2: [3, 3, 3, 3, 3], p3: [4, 4, 4, 4, 4] };
+    const game = await startGame(['p1', 'p2', 'p3']);
+    await click(game, 'p3', 'dice');
+    const asked = await clickPrivate(game, 'p3', 'quit');
+    assert.match(viewOf('p3'), /leave the game\?/);
+    assert.match(viewOf('p3'), /:quityes"/);
+    assert.equal(game.views.get('p3').interaction, asked.interaction, 'the view now redraws through the click made in it');
+
+    await bid(game, 'p1', 2, 3); // the game moves on while p3 decides
+    assert.equal(asked.shown.length, 2, 'redrawn through that click');
+    assert.match(viewOf('p3'), /leave the game\?/, 'still asking');
+
+    const stayed = await clickPrivate(game, 'p3', 'stay');
+    assert.equal(game.views.get('p3').interaction, stayed.interaction);
+    assert.match(viewOf('p3'), /4️⃣ 4️⃣ 4️⃣ 4️⃣ 4️⃣/);
+    assert.match(viewOf('p3'), /Current bid: \*\*2 × 3️⃣\*\*/);
+    assert.equal(game.dice.get('p3'), 5, 'still playing');
+});
+
+// ─── Turn pings ───────────────────────────────────────────────
+test('liar\'s dice: whoever\'s turn it is gets pinged after a while; the ping goes once they bid, and none goes out during a reveal', async () => {
+    gameConfig.TURN_PING_SECONDS = 0.1;
+    SETTINGS.revealSeconds = 0.3;
+    try {
+        const game = await startGame(['p1', 'p2']);
+        assert.ok(game.pingTimer, 'a ping is waiting for p1');
+        await bid(game, 'p1', 1, 2); // before it goes out
+        await wait(150);
+        assert.equal(posts.length, 1, 'p1 moved in time, so only p2 was pinged');
+        assert.match(posts[0].content, /<@p2>, it's your turn in \*\*🎲 Liar's Dice\*\*/);
+        assert.deepEqual(posts[0].allowedMentions, { users: ['p2'] });
+        assert.equal(deleted.length, 0);
+
+        await bid(game, 'p2', 2, 2);
+        assert.equal(deleted.length, 1, 'p2\'s ping is removed once they bid');
+        await click(game, 'p1', 'liar'); // a reveal starts before p1's ping is due
+        await wait(150);
+        assert.equal(game.state, 'reveal');
+        assert.equal(posts.length, 1, 'no ping during the reveal');
+    } finally {
+        gameConfig.TURN_PING_SECONDS = 60;
+        SETTINGS.revealSeconds = 0.05;
+    }
+});
+
+// ─── Privacy ──────────────────────────────────────────────────
+test('liar\'s dice: while bidding, nobody\'s dice show anywhere public, and each view shows only its owner\'s dice', async () => {
+    gameConfig.TURN_PING_SECONDS = 0.05; // so pings go out too
+    try {
+        planned = { p1: [6, 6, 6, 6, 6], p2: [5, 5, 5, 5, 5], p3: [4, 4, 4, 4, 4] };
+        const game = await startGame(['p1', 'p2', 'p3']);
+        for (const p of ['p1', 'p2', 'p3']) await click(game, p, 'dice');
+        const form = (await click(game, 'p1', 'bid')).modal;
+        await bid(game, 'p1', 2, 2);
+        await wait(100); // p2 is pinged
+        const refusals = [await click(game, 'p3', 'bid'), await click(game, 'p3', 'liar'), await bid(game, 'p2', 1, 2), await click(game, 'p9', 'dice')];
+        await bid(game, 'p2', 3, 2);
+        assert.equal(game.state, 'bidding');
+
+        // On the game message, a face only ever appears in a bid
+        assert.ok(screens.length >= 4);
+        for (const s of screens) assert.doesNotMatch(text(s).replace(/\d+ × \d️⃣/g, ''), KEYCAP);
+        assert.ok(posts.length >= 1, 'a ping went out');
+        for (const p of posts) assert.doesNotMatch(JSON.stringify(p), KEYCAP);
+        for (const r of refusals) assert.doesNotMatch(notice(r), /6️⃣|5️⃣|4️⃣/);
+        // The bid form shows the five faces to choose from, nothing else
+        assert.equal(JSON.stringify(form.toJSON()).match(/\d️⃣/g).length, 5);
+
+        // Each view shows its owner's dice and nobody else's (the 2s and 3s are bids)
+        assert.match(viewOf('p1'), /6️⃣ 6️⃣ 6️⃣ 6️⃣ 6️⃣/);
+        assert.doesNotMatch(viewOf('p1'), /5️⃣|4️⃣/);
+        assert.match(viewOf('p2'), /5️⃣ 5️⃣ 5️⃣ 5️⃣ 5️⃣/);
+        assert.doesNotMatch(viewOf('p2'), /6️⃣|4️⃣/);
+        assert.match(viewOf('p3'), /4️⃣ 4️⃣ 4️⃣ 4️⃣ 4️⃣/);
+        assert.doesNotMatch(viewOf('p3'), /6️⃣|5️⃣/);
+    } finally {
+        gameConfig.TURN_PING_SECONDS = 60;
+    }
 });
 
 // ─── Discord's limits ─────────────────────────────────────────
@@ -326,7 +461,8 @@ test('liar\'s dice: the board, the private view and the bid form fit Discord\'s 
     check(screens.at(-1), 'reveal');
     assert.match(latest(), /<@p6> · (.️⃣ ){4}.️⃣ · \*\*\d\*\*/u, 'everyone\'s dice are revealed');
 
-    for (const p of players.slice(1)) if (game.dice.get(p) > 0 && games.size) await clickPrivate(game, p, 'quit');
+    check((await clickPrivate(game, 'p2', 'quit')).shown[0], 'leave prompt');
+    for (const p of players.slice(1)) if (game.dice.get(p) > 0 && games.size) await clickPrivate(game, p, 'quityes');
     assert.equal(game.state, 'over');
     check(screens.at(-1), 'final');
 });

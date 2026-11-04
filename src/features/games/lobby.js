@@ -10,12 +10,13 @@
 // begin(game) sets the game up once the players are final (game.players, host first).
 // created(game), if given, runs as soon as the game exists, before anything is sent to Discord
 // (chat games claim their channel there, so two can't start in one channel at once).
+const { PermissionFlagsBits, UserSelectMenuBuilder } = require('discord.js');
 const gameConfig = require('../../config/games'); // read when used, so tests can shorten the wait
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { createGame, getGame, endGame, runExclusive, touch } = require('./sessions');
 const { gamePayload, showGame, updateBoard, editGame, notify } = require('./common');
 
-const LOBBY_ACTIONS = ['join', 'leave', 'begin', 'cancel'];
+const LOBBY_ACTIONS = ['join', 'leave', 'begin', 'cancel', 'invite'];
 
 const playerList = (ids) => ids.map(id => `<@${id}>`).join(', ');
 
@@ -33,6 +34,11 @@ function renderLobby(game) {
             button(`game:${id}:begin`, 'Start', ButtonStyle.Primary, { emoji: '▶️', disabled: players.length < minPlayers }),
             button(`game:${id}:cancel`, 'Cancel', ButtonStyle.Danger),
         ),
+        players.length < maxPlayers ? row(new UserSelectMenuBuilder()
+            .setCustomId(`game:${id}:invite`)
+            .setPlaceholder('Invite people (they get a ping)…')
+            .setMinValues(1)
+            .setMaxValues(10)) : null,
     ], color);
 }
 
@@ -42,7 +48,24 @@ const closedPayload = (game, text) => gamePayload([`## ${game.title}`, text], ga
  * Opens a lobby in place of the /games menu. `data` is copied onto the game (options from the
  * menu, game settings); `hooks` are the game's { begin, render, created? }.
  */
+/**
+ * Why a party game can't be hosted where this interaction happened, or null if it can. A party
+ * game can outlast the 15 minutes an interaction can edit its message; after that the bot edits
+ * the game message itself, which only works in a channel it can see.
+ */
+function cannotHost(interaction) {
+    if (interaction.appPermissions && !interaction.appPermissions.has(PermissionFlagsBits.ViewChannel)) {
+        return 'I can\'t see this channel, so party games can\'t run here (they can last longer than I\'m able to update them without seeing the channel). Try a channel I can see!';
+    }
+    return null;
+}
+
 async function openLobby(interaction, type, { title, color, rules, minPlayers, maxPlayers, data = {} }, hooks) {
+    const problem = cannotHost(interaction);
+    if (problem) {
+        await notify(interaction, problem);
+        return null;
+    }
     const game = createGame(type, {
         guildId: interaction.guildId,
         channelId: interaction.channelId,
@@ -108,6 +131,17 @@ async function handleLobby(game, interaction, action) {
             if (game.players.length < game.minPlayers) return notify(interaction, `At least ${game.minPlayers} players are needed.`).then(() => true);
             await beginGame(game, interaction);
             return true;
+        case 'invite': {
+            // Editing the lobby doesn't notify anyone, so invitations are a separate message that pings
+            if (!game.players.includes(userId)) return notify(interaction, 'Join first, then you can invite people.').then(() => true);
+            const invited = [...(interaction.users?.values() ?? [])].filter(u => !u.bot && !game.players.includes(u.id)).map(u => u.id);
+            if (!invited.length) return notify(interaction, 'They\'re already in (and bots can\'t play).').then(() => true);
+            await interaction.followUp({
+                content: `${playerList(invited)}, <@${userId}> invited you to play **${game.title}**! Press **Join** above.`,
+                allowedMentions: { users: invited },
+            });
+            break; // redraw the lobby, which also clears the picker
+        }
         case 'cancel':
             if (!isHost) return notify(interaction, 'Only the host can call off the game.').then(() => true);
             endGame(game);
@@ -120,4 +154,4 @@ async function handleLobby(game, interaction, action) {
     return true;
 }
 
-module.exports = { LOBBY_ACTIONS, openLobby, handleLobby, renderLobby, playerList };
+module.exports = { LOBBY_ACTIONS, openLobby, handleLobby, renderLobby, cannotHost, playerList };

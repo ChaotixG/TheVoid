@@ -3,19 +3,24 @@ const assert = require('node:assert/strict');
 const { MessageFlags } = require('discord.js');
 const { startDatabase, stopDatabase, clearDatabase, inspectPanel } = require('./helpers');
 
-// Turns are long unless a test shortens them (read when each turn starts)
+// Turns (and the wait before a "your turn" ping) are long unless a test shortens them
 const gameConfig = require('../src/config/games');
 const settings = gameConfig.PARTY.crazyEights;
 settings.turnSeconds = 60;
+gameConfig.TURN_PING_SECONDS = 60;
 
 const Wallet = require('../src/models/Wallet');
+const GameStats = require('../src/models/GameStats');
 const { games } = require('../src/features/games/sessions');
 const router = require('../src/events/interactionCreate/router');
 const crazyEights = require('../src/features/games/crazyEights');
 const { winnerReward } = require('../src/features/games/scoring');
 
 const stopGames = () => {
-    for (const g of games.values()) clearTimeout(g.timer);
+    for (const g of games.values()) {
+        clearTimeout(g.timer);
+        clearTimeout(g.pingTimer);
+    }
     games.clear();
 };
 
@@ -28,7 +33,10 @@ beforeEach(async () => {
     await clearDatabase();
     stopGames();
     settings.turnSeconds = 60;
+    gameConfig.TURN_PING_SECONDS = 60;
     screens = [];
+    sent = [];
+    deleted = [];
 });
 
 const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.balance ?? 0;
@@ -38,26 +46,43 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 // Every edit of the shared game message, from any interaction, in order
 let screens = [];
 const latest = () => text(screens.at(-1));
+let sent = [];    // every reply and follow-up sent, in order (ephemeral or not)
+let deleted = []; // follow-ups deleted again (turn pings)
 
 // A stand-in interaction that records what the bot answered. Clicks on the game message (m1) edit
 // it; clicks in a private view (an ephemeral message, like the real one) only update that view.
-function fake({ userId = 'p1', customId, values, privateView = false } = {}) {
+// `calls.views` is everything that private view showed: the first answer, then each refresh.
+// `createdTimestamp` makes a click old (its token expired); `failViewEdits` is a dismissed view.
+function fake({ userId = 'p1', customId, values, privateView = false, createdTimestamp = Date.now(), failViewEdits = false } = {}) {
     const calls = { replies: [], views: [] };
     const show = (p) => (privateView ? calls.views : screens).push(p);
+    let followUps = 0;
     const i = {
         user: { id: userId }, guildId: 'g1', channelId: 'c1', customId, values,
         message: privateView
             ? { id: 'v1', flags: { has: (flag) => flag === MessageFlags.Ephemeral } }
             : { id: 'm1', edit: async (p) => { screens.push(p); } },
-        createdTimestamp: Date.now(),
+        createdTimestamp,
         client: { user: { id: 'me' } },
         deferred: false, replied: false,
         isChatInputCommand: () => false, isMessageComponent: () => true, isModalSubmit: () => false, isRepliable: () => true,
-        reply: async (p) => { calls.replies.push(p); i.replied = true; },
+        reply: async (p) => { calls.replies.push(p); sent.push(p); i.replied = true; },
         update: async (p) => { show(p); i.replied = true; },
         deferUpdate: async () => { i.deferred = true; },
         editReply: async (p) => { show(p); },
-        followUp: async (p) => { calls.replies.push(p); },
+        followUp: async (p) => {
+            calls.replies.push(p);
+            sent.push(p);
+            if (p.components) calls.views.push(p); // a private view (openView)
+            return { id: `${userId}-${++followUps}` };
+        },
+        deleteReply: async (id) => { deleted.push(id); },
+        webhook: {
+            editMessage: async (id, p) => {
+                if (failViewEdits) throw new Error('Unknown Message');
+                calls.views.push(p);
+            },
+        },
     };
     return { i, calls };
 }
@@ -71,6 +96,10 @@ const click = (game, userId, action, arg = '') => press(`game:${game.id}:${actio
 // A click (or a color choice) in someone's private view of their hand
 const tap = (game, userId, action, arg = '', values) => press(`game:${game.id}:${action}:${arg}`, userId, { privateView: true, values });
 const viewOf = (calls) => text(calls.views.at(-1));
+// Presses My hand on the game message; the private view arrives as a follow-up and refreshes itself
+const openHand = (game, userId, extra = {}) => press(`game:${game.id}:hand:`, userId, extra);
+const isPublic = (p) => !(Number(p.flags ?? 0) & MessageFlags.Ephemeral);
+const statsOf = async () => Object.fromEntries((await GameStats.find({ game: 'crazyEights' }).lean()).map(r => [r.userId, { played: r.played, wins: r.wins }]));
 const notice = (calls) => calls.replies[0]?.content;
 const newestGame = () => [...games.values()].at(-1);
 
@@ -139,6 +168,7 @@ test('crazy eights: the lobby explains the rules; everyone gets 7 cards and the 
     assert.match(notice(await click(game, 'p2', 'leave')), /My hand/);
 
     assert.match(text(game.onExpire()), /no moves for 10 minutes/);
+    assert.equal(await GameStats.countDocuments(), 0, 'an idle game isn\'t recorded');
 });
 
 test('crazy eights: your hand is private; only matching cards can be played, on your own turn', async () => {
@@ -324,6 +354,14 @@ test('crazy eights: leaving mid-game puts your cards back in the deck; the last 
     const game = await startGame();
     deal(game, { hands: { p1: ['r1', 'r2'], p2: ['b1', 'b2', 'b3'], p3: ['g1'] }, top: 'r5', deck: ['y1'] });
 
+    // Another player's move doesn't throw away an open Leave question
+    const asking = await tap(game, 'p3', 'quit');
+    await tap(game, 'p1', 'play', 'r1');
+    assert.match(viewOf(asking), /Leave the game\?.*quitYes/, 'still asking after p1\'s move');
+    await tap(game, 'p3', 'view'); // Stay
+    deal(game, { hands: { p1: ['r1', 'r2'], p2: ['b1', 'b2', 'b3'], p3: ['g1'] }, top: 'r5', deck: ['y1'] });
+    game.turn = game.players.indexOf('p1'); // back to the starting position
+
     assert.match(viewOf(await tap(game, 'p1', 'quit')), /Leave the game\?/);
     assert.ok(game.players.includes('p1'), 'nothing happens until it\'s confirmed');
     assert.match(viewOf(await tap(game, 'p1', 'quitYes')), /You left the game/);
@@ -342,6 +380,9 @@ test('crazy eights: leaving mid-game puts your cards back in the deck; the last 
     assert.equal(await balanceOf('p2'), 0, 'nobody was beaten (they left or were removed), so the win pays nothing');
     assert.equal(await balanceOf('p1'), 0);
     assert.equal(await balanceOf('p3'), 0);
+    assert.deepEqual(await statsOf(), {
+        p1: { played: 1, wins: 0 }, p2: { played: 1, wins: 1 }, p3: { played: 1, wins: 0 },
+    }, 'a last-player-left win counts, and leaving still counts as a game played');
 });
 
 test('crazy eights: first to empty their hand wins; with 3+ players the fewest cards left gets the runner-up prize', async () => {
@@ -353,8 +394,9 @@ test('crazy eights: first to empty their hand wins; with 3+ players the fewest c
     assert.match(latest(), /<@p1> · \*\*1 card!\*\*/);
     await tap(game, 'p2', 'play', 'b7');
     await tap(game, 'p3', 'draw'); // 🟨9 doesn't match
-    const won = viewOf(await tap(game, 'p1', 'play', 'b1'));
-    assert.match(won, /You played your last card and won!/);
+    const won = await tap(game, 'p1', 'play', 'b1');
+    assert.match(text(won.views[0]), /You played your last card and won!/);
+    assert.match(viewOf(won), new RegExp(`You won!\\*\\* · \\+${winnerReward('crazyEights', 3)} 🪙`), 'then the view shows the coins');
 
     assert.equal(games.size, 0);
     assert.equal(game.state, 'over');
@@ -370,6 +412,10 @@ test('crazy eights: first to empty their hand wins; with 3+ players the fewest c
     assert.equal(await balanceOf('p2'), r.runnerUp);
     assert.equal(await balanceOf('p3'), 0);
     assert.match(notice(await click(game, 'p2', 'hand')), /This game has ended/);
+    await tap(game, 'p2', 'draw'); // clicks after the end don't record it again
+    assert.deepEqual(await statsOf(), {
+        p1: { played: 1, wins: 1 }, p2: { played: 1, wins: 0 }, p3: { played: 1, wins: 0 },
+    });
 
     // A tie for the fewest cards: both get the runner-up prize
     const tie = await startGame(['q1', 'q2', 'q3']);
@@ -430,4 +476,127 @@ test('crazy eights: the game message and private views fit Discord\'s limits wit
     await tap(game, 'p1', 'play', 'r9');
     assert.equal(games.size, 0);
     check(screens.at(-1), 'final board');
+});
+
+test('crazy eights: open hands refresh after other players\' moves; in-view clicks keep them live; expired and dismissed views are dropped', async () => {
+    const game = await startGame(['p1', 'p2', 'p3', 'p4']);
+    deal(game, { hands: { p1: ['r7', 'r1'], p2: ['b7', 'b2'], p3: ['g7', 'g5'], p4: ['y4', 'y5'] }, top: 'r5', deck: ['y1', 'y2'] });
+
+    const expired = await openHand(game, 'p4', { createdTimestamp: Date.now() - 15 * 60_000 }); // too old to edit
+    const dismissed = await openHand(game, 'p3', { failViewEdits: true });
+    const live = await openHand(game, 'p2');
+    assert.equal(live.views[0].flags, MessageFlags.Ephemeral | MessageFlags.IsComponentsV2);
+    assert.match(text(live.views[0]), /<@p1>'s turn/);
+    assert.deepEqual([...game.views.keys()].sort(), ['p2', 'p3', 'p4']);
+    assert.ok(!screens.some(p => text(p).includes('Your hand')), 'opening a hand never shows it on the game message');
+
+    const mover = await tap(game, 'p1', 'play', 'r7');
+    assert.equal(live.views.length, 2, 'p2\'s open hand was redrawn');
+    assert.match(viewOf(live), /\*\*Your turn!\*\*/);
+    assert.match(viewOf(live), /Top card 🟥7/);
+    assert.ok(!game.views.has('p3'), 'a view that can\'t be edited is dropped');
+    assert.equal(expired.views.length, 1, 'an expired view isn\'t edited…');
+    assert.ok(!game.views.has('p4'), '…and is dropped');
+    assert.equal(mover.views.length, 1, 'the mover\'s own view was answered by their click, not redrawn again');
+    assert.equal(game.views.get('p1').interaction.customId, `game:${game.id}:play:r7`, 'and is tracked through it');
+
+    // A click inside a view takes over keeping it live
+    const refreshed = await tap(game, 'p1', 'view');
+    await tap(game, 'p2', 'play', 'b7');
+    assert.equal(refreshed.views.length, 2);
+    assert.match(viewOf(refreshed), /<@p3>'s turn/);
+    assert.equal(mover.views.length, 1, 'the older click is no longer used');
+    assert.equal(dismissed.views.length, 1);
+
+    // Game over: every open hand shows the result, the winner's with their coins
+    const p3 = await openHand(game, 'p3');
+    deal(game, { hands: { p3: ['g7'] }, top: 'b7' });
+    const won = await tap(game, 'p3', 'play', 'g7');
+    assert.equal(games.size, 0);
+    assert.match(viewOf(won), new RegExp(`You won!\\*\\* · \\+${winnerReward('crazyEights', 4)} 🪙`));
+    assert.match(viewOf(refreshed), /The game is over · <@p3> won/);
+    assert.equal(p3.views.length, 1, 'p3\'s older view was replaced by the click that won');
+});
+
+test('crazy eights: leaving or being taken out stops your view from updating', async () => {
+    const game = await startGame();
+    deal(game, { hands: { p1: ['r1', 'r2'], p2: ['b1', 'b2'], p3: ['g1', 'g2'] }, top: 'r5', deck: ['y1', 'y2'] });
+    const p2 = await openHand(game, 'p2');
+    const p3 = await openHand(game, 'p3');
+
+    await tap(game, 'p3', 'quit');
+    await tap(game, 'p3', 'quitYes');
+    assert.ok(!game.views.has('p3'));
+    assert.equal(p3.views.length, 1);
+
+    // p2 runs out of time a third turn in a row: their view says so, then stops updating
+    game.timeouts.set('p2', 2);
+    settings.turnSeconds = 0.15;
+    await tap(game, 'p1', 'play', 'r1');
+    settings.turnSeconds = 60;
+    await wait(400);
+    assert.match(viewOf(p2), /You ran out of time 3 turns in a row, so you're out of this game/);
+    assert.ok(!game.views.has('p2'));
+    assert.equal(games.size, 0, 'p1 is the last player left');
+});
+
+test('crazy eights: a "your turn" ping goes out when someone doesn\'t move, and is removed when the turn ends', async () => {
+    gameConfig.TURN_PING_SECONDS = 0.15;
+    const game = await startGame(); // the first turn is announced too
+    deal(game, { hands: { p1: ['r7', 'r1'], p2: ['b7', 'b2'], p3: ['g7', 'g5'] }, top: 'r5' });
+    const pings = () => sent.filter(p => /it's your turn/.test(p.content ?? ''));
+
+    await wait(300);
+    assert.equal(pings().length, 1);
+    assert.equal(pings()[0].content, '<@p1>, it\'s your turn in **🎴 Crazy Eights**!');
+    assert.deepEqual(pings()[0].allowedMentions, { users: ['p1'] });
+    assert.ok(isPublic(pings()[0]));
+
+    await tap(game, 'p1', 'play', 'r7');
+    assert.equal(deleted.length, 1, 'p1 moved, so their ping is removed');
+    await tap(game, 'p2', 'play', 'b7'); // p2 moves before their ping would go out
+    await wait(300);
+    assert.equal(pings().length, 2);
+    assert.match(pings()[1].content, /^<@p3>/, 'p2 was never pinged');
+
+    deal(game, { hands: { p3: ['g7'] }, top: 'b7' });
+    await tap(game, 'p3', 'play', 'g7');
+    assert.equal(deleted.length, 2, 'the game ending removes the last ping');
+});
+
+test('crazy eights: nothing public ever names a card in someone\'s hand', async () => {
+    gameConfig.TURN_PING_SECONDS = 0.1; // pings are public messages too
+    const game = await startGame();
+    // Yellow cards are only ever held or drawn, never played, so 🟨 must never show publicly
+    deal(game, {
+        hands: { p1: ['r7', 'rd', 'y1', 'y2'], p2: ['r9', 'y3', 'yd'], p3: ['b9', 'y4', 'ys'] },
+        top: 'r5', deck: ['y7', 'y8', 'y9', 'yr', 'y6', 'y5'],
+    });
+    const from = { screens: screens.length, sent: sent.length }; // the random first deal could show anything
+    const hands = {};
+    for (const id of ['p1', 'p2', 'p3']) hands[id] = await openHand(game, id);
+
+    await tap(game, 'p1', 'play', 'r7');
+    await tap(game, 'p2', 'draw'); // 🟨5 doesn't match, so the turn passes
+    await tap(game, 'p3', 'draw'); // 🟨6 neither
+    settings.turnSeconds = 0.15;
+    await tap(game, 'p1', 'play', 'rd'); // p2 draws 2 (🟨🔁 🟨9); p3's turn is short
+    settings.turnSeconds = 60;
+    await wait(400); // p3 runs out of time and draws 🟨8
+    await tap(game, 'p1', 'draw'); // 🟨7, no match
+    await tap(game, 'p2', 'play', 'r9');
+    await tap(game, 'p3', 'quit');
+    await tap(game, 'p3', 'quitYes');
+    await tap(game, 'p1', 'quit');
+    await tap(game, 'p1', 'quitYes'); // p2 is the last player left
+    assert.equal(games.size, 0);
+
+    assert.match(viewOf(hands.p2), /🟨/, 'the yellow cards really are in hands (their owners see them)');
+    assert.match(screens.map(text).join('\n'), /drew a card/);
+    assert.ok(sent.some(p => isPublic(p) && /your turn/.test(p.content)), 'a ping went out');
+    const publicText = [...screens.slice(from.screens).map(text), ...sent.slice(from.sent).filter(isPublic).map(p => JSON.stringify(p))];
+    for (const t of publicText) {
+        assert.doesNotMatch(t, /🟨/, 'a held card was shown publicly');
+        assert.doesNotMatch(t, /:(play|color):/, 'a card button was on a public message');
+    }
 });

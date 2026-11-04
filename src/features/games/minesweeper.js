@@ -5,6 +5,7 @@ const { minesweeperReward } = require('./scoring');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 
 const TITLE = '💣 Minesweeper';
@@ -95,6 +96,7 @@ async function handle(game, interaction, action, arg) {
         game.gaveUp = true;
         game.mines ??= placeMines(-1);
         endGame(game);
+        await recordGame(game);
         return updateBoard(game, interaction, render(game));
     }
     if (action !== 'cell') return interaction.deferUpdate();
@@ -117,6 +119,7 @@ async function handle(game, interaction, action, arg) {
         game.state = 'lost';
         game.hit = i;
         endGame(game);
+        await recordGame(game);
         return updateBoard(game, interaction, render(game));
     }
 
@@ -127,6 +130,7 @@ async function handle(game, interaction, action, arg) {
         await interaction.deferUpdate();
         game.seconds = Math.round((Date.now() - game.startedAt) / 1000);
         game.reward = await payGameReward(interaction.user.id, minesweeperReward(game.seconds), { guildId: game.guildId, game: 'Minesweeper' });
+        await recordGame(game, { winners: game.players, scores: { [game.players[0]]: game.seconds } });
     }
     return updateBoard(game, interaction, render(game));
 }

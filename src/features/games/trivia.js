@@ -8,6 +8,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, runExclusive, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { gamePayload, showGame, updateBoard, notify } = require('./common');
 const { warn } = require('../../services/logger');
 
@@ -148,6 +149,7 @@ async function handle(game, interaction, action, arg) {
             game.winnerId = userId;
             // Solo: answers in a row earn a streak bonus; a race pays each winner the base amount
             game.streak = game.mode === 'solo' ? (game.streak ?? 0) + 1 : 1;
+            game.bestStreak = Math.max(game.bestStreak ?? 0, game.streak);
             if (game.mode === 'solo') game.correct++;
             game.reward = await payGameReward(userId, triviaReward(game.question.difficulty, game.streak), { guildId: game.guildId, game: 'Trivia' });
         } else {
@@ -163,6 +165,7 @@ async function handle(game, interaction, action, arg) {
         if (action === 'stop') {
             game.stopped = true;
             endGame(game);
+            await recordTrivia(game);
             return updateBoard(game, interaction, render(game));
         }
         const question = await nextQuestion(game.difficulty);
@@ -174,9 +177,16 @@ async function handle(game, interaction, action, arg) {
 }
 
 /** Starts trivia from the /games menu: solo or a race, at a difficulty */
+// Solo games count toward stats (a race has no one result to record)
+function recordTrivia(game) {
+    if (game.mode !== 'solo' || !game.asked) return null;
+    return recordGame(game, { scores: { [game.starterId]: game.bestStreak ?? 0 } });
+}
+
 async function start(interaction, { mode = 'solo', difficulty = 'any' } = {}) {
     // Fetching questions can take a moment; the menu stays put if none can be had
-    await (interaction.isMessageComponent?.() ? interaction.deferUpdate() : interaction.deferReply());
+    // (Play again has already acknowledged with a new message of its own)
+    if (!interaction.deferred && !interaction.replied) await (interaction.isMessageComponent?.() ? interaction.deferUpdate() : interaction.deferReply());
     const question = await nextQuestion(difficulty);
     if (!question) return notify(interaction, 'Trivia questions are unavailable right now. Try again in a minute.');
 
@@ -190,6 +200,7 @@ async function start(interaction, { mode = 'solo', difficulty = 'any' } = {}) {
         correct: 0,
     });
     game.onExpire = () => {
+        recordTrivia(game); // saved in the background; the board is shown right away
         if (game.state === 'asking') game.timedOut = true;
         game.stopped = true;
         game.state = 'revealed';

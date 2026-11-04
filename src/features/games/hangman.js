@@ -6,6 +6,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 const { randomHangmanWord } = require('./words');
 
@@ -55,9 +56,11 @@ async function finishIfOver(game, interaction) {
         endGame(game);
         await interaction.deferUpdate();
         game.reward = await payGameReward(interaction.user.id, hangmanReward(HANGMAN.lives - game.misses), { guildId: game.guildId, game: 'Hangman' });
+        await recordGame(game, { winners: game.players, scores: { [game.players[0]]: HANGMAN.lives - game.misses } });
     } else if (game.misses >= HANGMAN.lives) {
         game.state = 'lost';
         endGame(game);
+        await recordGame(game);
     }
 }
 
@@ -93,6 +96,7 @@ async function handle(game, interaction, action) {
         game.state = 'lost';
         game.gaveUp = true;
         endGame(game);
+        await recordGame(game);
         return updateBoard(game, interaction, render(game));
     }
     return interaction.deferUpdate();

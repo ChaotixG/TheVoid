@@ -1,5 +1,6 @@
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { MessageFlags } = require('discord.js');
 const { startDatabase, stopDatabase, clearDatabase, inspectPanel } = require('./helpers');
 
 // Short timers so lobbies and rounds can be played through quickly
@@ -8,6 +9,7 @@ gameConfig.LOBBY_SECONDS = 0.4;
 Object.assign(gameConfig.PARTY.higherLower, { guessSeconds: 0.4, maxRounds: 3 });
 
 const Wallet = require('../src/models/Wallet');
+const GameStats = require('../src/models/GameStats');
 const { games } = require('../src/features/games/sessions');
 const router = require('../src/events/interactionCreate/router');
 const higherLower = require('../src/features/games/higherLower');
@@ -23,6 +25,8 @@ beforeEach(async () => {
 });
 
 const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.balance ?? 0;
+// { userId: { played, wins, best } } for this game
+const stats = async () => Object.fromEntries((await GameStats.find({ game: 'higherLower' }).lean()).map(r => [r.userId, { played: r.played, wins: r.wins, best: r.best }]));
 const text = (payload) => JSON.stringify(payload.components.map(c => c.toJSON()));
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(check, ms = 3000) {
@@ -144,6 +148,11 @@ test('higher or lower: the last one in wins; coins per right guess plus the winn
     assert.equal(await balanceOf('p2'), perRound);
     assert.equal(await balanceOf('p3'), 0);
     assert.match(notice(await guess(game, 'p1', 'higher')), /This game has ended/);
+    assert.deepEqual(await stats(), {
+        p1: { played: 1, wins: 1, best: 2 },
+        p2: { played: 1, wins: 0, best: 1 },
+        p3: { played: 1, wins: 0, best: 0 },
+    }, 'recorded once, with right guesses as the score');
 });
 
 test('higher or lower: everyone still in after the last round wins', async () => {
@@ -158,6 +167,7 @@ test('higher or lower: everyone still in after the last round wins', async () =>
     const coins = 3 * gameConfig.REWARDS.higherLower.perRound; // nobody was knocked out: no winner's reward
     assert.equal(await balanceOf('p1'), coins);
     assert.equal(await balanceOf('p2'), coins);
+    assert.deepEqual(await stats(), { p1: { played: 1, wins: 1, best: 3 }, p2: { played: 1, wins: 1, best: 3 } });
 });
 
 test('higher or lower: players who never guess can\'t collect coins by sitting through every round', async () => {
@@ -180,6 +190,36 @@ test('higher or lower: the host can end it early, and right guesses so far are p
     assert.doesNotMatch(latest(), /wins/);
     assert.equal(await balanceOf('p1'), gameConfig.REWARDS.higherLower.perRound, 'no winner yet, so no winner\'s reward');
     assert.equal(await balanceOf('p2'), gameConfig.REWARDS.higherLower.perRound);
+    assert.deepEqual(await stats(), { p1: { played: 1, wins: 0, best: 1 }, p2: { played: 1, wins: 0, best: 1 } }, 'no winners when ended early');
+});
+
+test('higher or lower: nobody can tell who picked what before the reveal', async () => {
+    const saved = gameConfig.PARTY.higherLower.guessSeconds;
+    gameConfig.PARTY.higherLower.guessSeconds = 3; // long enough for the "2/3 guessed" refresh to go out
+    try {
+        const game = await startGame(['p1', 'p2', 'p3']);
+        setNumbers(game, 50, 87);
+        const shown = screens.length;
+        const replies = [...(await guess(game, 'p1', 'higher')).replies, ...(await guess(game, 'p2', 'lower')).replies];
+        assert.equal(replies.length, 2);
+        assert.ok(replies.every(r => r.flags & MessageFlags.Ephemeral), 'confirmations are private');
+
+        await until(() => /2\/3 guessed/.test(latest()), 4000);
+        const publicText = screens.slice(shown).map(text).join('\n').replace(/<t:\d+:R>/g, '');
+        assert.doesNotMatch(publicText, /Locked in|picked/);
+        assert.doesNotMatch(publicText, /\b87\b/, 'the next number stays hidden');
+        // The board is the same whoever picked what: only how many have guessed shows
+        const swapped = () => ({ ...game, guesses: new Map([['p1', 'lower'], ['p2', 'higher']]) });
+        assert.equal(text(higherLower.render(swapped())), text(higherLower.render(game)));
+
+        // Ending mid-round doesn't give this round's picks away either
+        await click(game, 'p1', 'end');
+        assert.equal(game.state, 'over');
+        assert.equal(text(higherLower.render(swapped())), text(higherLower.render(game)));
+        assert.doesNotMatch(latest().replace(/<t:\d+:R>/g, ''), /\b87\b/);
+    } finally {
+        gameConfig.PARTY.higherLower.guessSeconds = saved;
+    }
 });
 
 test('higher or lower: boards fit Discord\'s limits with the most players', async () => {

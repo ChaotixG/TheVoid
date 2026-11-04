@@ -8,6 +8,7 @@ gameConfig.LOBBY_SECONDS = 0.4;
 Object.assign(gameConfig.PARTY.scramble, { rounds: 3, roundSeconds: 0.6, pauseSeconds: 0.1 });
 
 const Wallet = require('../src/models/Wallet');
+const GameStats = require('../src/models/GameStats');
 const { games } = require('../src/features/games/sessions');
 const chat = require('../src/features/games/chat');
 const router = require('../src/events/interactionCreate/router');
@@ -25,6 +26,8 @@ beforeEach(async () => {
 });
 
 const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.balance ?? 0;
+// { userId: { played, wins, best } } for this game
+const stats = async () => Object.fromEntries((await GameStats.find({ game: 'scramble' }).lean()).map(r => [r.userId, { played: r.played, wins: r.wins, best: r.best }]));
 const text = (payload) => JSON.stringify(payload.components.map(c => c.toJSON()));
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(check, ms = 3000) {
@@ -150,6 +153,7 @@ test('scramble: the first right answer scores; wrong answers and chat don\'t; hi
     assert.match(latest(), new RegExp(`<@p2> · 1 word · \\+${perWord + winnerBonus} 🪙`));
     assert.equal(await balanceOf('p1'), perWord + winnerBonus);
     assert.equal(await balanceOf('p2'), perWord + winnerBonus);
+    assert.deepEqual(await stats(), { p1: { played: 1, wins: 1, best: 1 }, p2: { played: 1, wins: 1, best: 1 } }, 'a tie: both win');
 });
 
 test('scramble: the top scorer alone takes the bonus; no words, no coins', async () => {
@@ -166,6 +170,11 @@ test('scramble: the top scorer alone takes the bonus; no words, no coins', async
     assert.equal(await balanceOf('p3'), 2 * perWord + winnerBonus);
     assert.equal(await balanceOf('p2'), perWord);
     assert.equal(await balanceOf('p1'), 0);
+    assert.deepEqual(await stats(), {
+        p1: { played: 1, wins: 0, best: 0 },
+        p2: { played: 1, wins: 0, best: 1 },
+        p3: { played: 1, wins: 1, best: 2 },
+    }, 'recorded once, with words solved as the score');
 });
 
 test('scramble: the host can end it early, and words so far are paid', async () => {
@@ -181,6 +190,7 @@ test('scramble: the host can end it early, and words so far are paid', async () 
     const { perWord, winnerBonus } = gameConfig.REWARDS.scramble;
     assert.equal(await balanceOf('p2'), perWord + winnerBonus, 'the leader gets the bonus, like Trivia Party');
     assert.deepEqual(await say('p2', game.word), [], 'messages are ignored once it\'s over');
+    assert.deepEqual(await stats(), { p1: { played: 1, wins: 0, best: 0 }, p2: { played: 1, wins: 1, best: 1 } });
 });
 
 test('scramble: refused where the bot can\'t read chat, or where a chat game is already running', async () => {
@@ -189,6 +199,8 @@ test('scramble: refused where the bot can\'t read chat, or where a chat game is 
     await press('games:start:p1:scramble:', 'p1');
     assert.match(notice(await press('games:start:p2:wordChain:', 'p2', { messageId: 'm2' })), /already running in this channel/); // another menu
     assert.equal(games.size, 1);
+    await click(onlyGame(), 'p1', 'cancel');
+    assert.deepEqual(await stats(), {}, 'a called-off lobby isn\'t a game played');
 });
 
 test('scramble: boards fit Discord\'s limits with the most players', async () => {

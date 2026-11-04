@@ -9,6 +9,7 @@ const { openLobby, handleLobby, LOBBY_ACTIONS } = require('./lobby');
 const { listen, cannotListen } = require('./chat');
 const { SCRAMBLE_WORDS, isWord } = require('./words');
 const { payEach } = require('./rewards');
+const { recordGame } = require('./stats');
 
 const TITLE = '🔤 Scramble';
 const COLOR = 0xFEE75C;
@@ -96,7 +97,7 @@ async function reveal(game, round, solvedBy = null, answer = null) {
 
 // The first right answer takes the round; other chat is left alone
 async function onMessage(game, message) {
-    if (game.state !== 'asking') return;
+    if (message.author.bot || game.state !== 'asking') return;
     touch(game);
     const guess = message.content.trim().toLowerCase();
     if (!isAnswer(game.word, guess)) {
@@ -116,11 +117,13 @@ async function finish(game, note = null) {
     game.ranking = [...game.scores.entries()].sort((a, b) => b[1] - a[1]);
     const best = game.ranking[0]?.[1] ?? 0;
     const { perWord, winnerBonus } = REWARDS.scramble;
+    const winners = best > 0 ? game.ranking.filter(([, words]) => words === best).map(([userId]) => userId) : []; // a tie shares the win
     const awards = game.ranking.map(([userId, words]) => ({
         userId,
-        amount: perWord * words + (best > 0 && words === best ? winnerBonus : 0), // a tie shares the win
+        amount: perWord * words + (winners.includes(userId) ? winnerBonus : 0),
     }));
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Scramble' });
+    await recordGame(game, { winners, scores: Object.fromEntries(game.scores) });
 }
 
 // ─── Clicks ───────────────────────────────────────────────────

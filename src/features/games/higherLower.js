@@ -9,6 +9,7 @@ const { gamePayload, updateBoard, editGame, notify } = require('./common');
 const { openLobby, handleLobby, LOBBY_ACTIONS, playerList } = require('./lobby');
 const { winnerReward } = require('./scoring');
 const { payEach } = require('./rewards');
+const { recordGame } = require('./stats');
 
 const TITLE = '🔼 Higher or Lower';
 const COLOR = 0x5865F2;
@@ -89,6 +90,7 @@ async function finish(game, { winners = [], note = null } = {}) {
         amount: perRound * game.right.get(userId) + (winners.includes(userId) && beaten ? winnerReward('higherLower', beaten + 1) : 0),
     }));
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Higher or Lower' });
+    await recordGame(game, { winners, scores: Object.fromEntries(game.right) });
 }
 
 // Shows how many have guessed, without editing the message on every single click

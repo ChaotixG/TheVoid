@@ -6,6 +6,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 const { isValidGuess, randomWordleAnswer } = require('./words');
 
@@ -71,6 +72,7 @@ async function handle(game, interaction, action) {
         game.state = 'lost';
         game.gaveUp = true;
         endGame(game);
+        await recordGame(game);
         return updateBoard(game, interaction, render(game));
     }
 
@@ -86,9 +88,11 @@ async function handle(game, interaction, action) {
             endGame(game);
             await interaction.deferUpdate();
             game.reward = await payGameReward(interaction.user.id, wordleReward(game.guesses.length), { guildId: game.guildId, game: 'Wordle' });
+            await recordGame(game, { winners: game.players, scores: { [game.players[0]]: game.guesses.length } });
         } else if (game.guesses.length >= WORDLE.guesses) {
             game.state = 'lost';
             endGame(game);
+            await recordGame(game);
         }
         return updateBoard(game, interaction, render(game));
     }

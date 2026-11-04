@@ -3,7 +3,7 @@
 const { CHALLENGE_SECONDS } = require('../../config/games');
 const { container, row, button, panelPayload, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
-const { endGame, runExclusive, touch, editGame } = require('./sessions');
+const { endGame, runExclusive, touch, editGame, withEndButtons } = require('./sessions');
 
 const BOT = 'bot'; // stands in for the bot as an opponent
 
@@ -12,16 +12,25 @@ const gamePayload = (parts, color, mentions = []) => ({
     allowedMentions: { users: mentions },
 });
 
-// Shows a new game in place of the /games menu it was started from (or as a reply to a command)
-function showGame(interaction, payload) {
-    if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
-    return interaction.isMessageComponent?.() ? interaction.update(payload) : interaction.reply(payload);
+/**
+ * Shows a new game: in place of the /games menu it was started from, in a reply that was deferred
+ * (Play again posts a new message), or as a reply to a command. Records the message on the
+ * interaction (`gameMessage`) so the game knows where it lives.
+ */
+async function showGame(interaction, payload) {
+    let message;
+    if (interaction.deferred || interaction.replied) message = await interaction.editReply(payload);
+    else if (interaction.isMessageComponent?.()) message = (await interaction.update({ ...payload, withResponse: true }))?.resource?.message;
+    else message = (await interaction.reply({ ...payload, withResponse: true }))?.resource?.message;
+    interaction.gameMessage = message ?? interaction.message;
+    return message;
 }
 
 // Edit the game message from a click on it, and remember that interaction for later edits
 async function updateBoard(game, interaction, payload) {
-    if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
-    else await interaction.update(payload);
+    const finalPayload = withEndButtons(game, payload); // a finished game gets Play again
+    if (interaction.deferred || interaction.replied) await interaction.editReply(finalPayload);
+    else await interaction.update(finalPayload);
     touch(game, interaction);
 }
 
@@ -70,7 +79,7 @@ function armChallengeTimer(game, title) {
     game.timer = setTimeout(() => runExclusive(game, async () => {
         if (game.state !== 'challenge') return;
         endGame(game);
-        await game.lastInteraction?.editReply(gamePayload([`## ${title}`, `<@${game.players[1]}> didn't answer the challenge in time.`])).catch(() => {});
+        await editGame(game, gamePayload([`## ${title}`, `<@${game.players[1]}> didn't answer the challenge in time.`]));
     }), CHALLENGE_SECONDS * 1000);
 }
 

@@ -1,14 +1,18 @@
 // Liar's Dice: everyone rolls their dice in secret, then players take turns bidding how many of a
 // face are on the whole table (ones are wild), each bid higher than the last, until someone calls
 // "Liar!". Whoever was wrong loses a die; the last player with dice wins.
-// Your dice are in a private view; bids are made in a form.
+// Your dice are in a live private view (nobody else's dice are shown until a round ends); bids are
+// made in a form.
 const { randomInt } = require('crypto');
-const { LabelBuilder, MessageFlags, ModalBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { LabelBuilder, ModalBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { PARTY, REWARDS } = require('../../config/games');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { getGame, endGame, runExclusive, touch } = require('./sessions');
 const { gamePayload, updateBoard, editGame, notify } = require('./common');
 const { openLobby, handleLobby, LOBBY_ACTIONS } = require('./lobby');
+const { openView, trackView, refreshViews, dropView } = require('./privateViews');
+const { announceTurn, clearTurn } = require('./turns');
+const { recordGame } = require('./stats');
 const { winnerReward } = require('./scoring');
 const { payEach } = require('./rewards');
 
@@ -68,6 +72,7 @@ async function begin(game) {
     game.round = 0;
     game.turnNo = 0; // counts every turn, so late timers and old bid forms can be told apart
     game.starter = game.players[0];
+    game.confirming = new Set(); // players asked "Leave the game?" in their private view
     game.onExpire = () => {
         game.state = 'expired';
         return gamePayload([`## ${TITLE} · Round ${game.round}`, playerLines(game), '-# Nobody played for a while, so the game ended.'], COLOR);
@@ -95,17 +100,27 @@ function startTurn(game, userId) {
     game.turnEndsAt = Date.now() + ms;
     const turnNo = game.turnNo;
     game.timer = setTimeout(() => runExclusive(game, () => timeUp(game, turnNo)), ms);
+    announceTurn(game, userId);
 }
 
 async function timeUp(game, turnNo) {
     if (!getGame(game.id) || game.state !== 'bidding' || game.turnNo !== turnNo) return;
     await endRound(game, { reason: 'timeout', loser: game.turn });
-    await editGame(game, render(game));
+    await redraw(game);
+}
+
+// After any change: the game message (through `interaction` when it was a click on it), then
+// everyone's open private view
+async function redraw(game, interaction = null) {
+    if (interaction) await updateBoard(game, interaction, render(game));
+    else await editGame(game, render(game));
+    await refreshViews(game, privateView);
 }
 
 // Someone loses a die: show everyone's dice, then roll again (or end the game when one player is left)
 async function endRound(game, { reason, loser, caller = null, count = null }) {
     clearTimeout(game.timer);
+    clearTurn(game); // no turns during the reveal
     game.reveal = { reason, loser, caller, count, bid: game.bid, rolls: game.rolls };
     game.dice.set(loser, game.dice.get(loser) - 1);
     if (!game.dice.get(loser)) game.out.push({ userId: loser, round: game.round, left: false });
@@ -119,7 +134,7 @@ async function endRound(game, { reason, loser, caller = null, count = null }) {
     game.timer = setTimeout(() => runExclusive(game, async () => {
         if (!getGame(game.id) || game.state !== 'reveal' || game.round !== round) return;
         newRound(game);
-        await editGame(game, render(game));
+        await redraw(game);
     }), ms);
 }
 
@@ -158,6 +173,7 @@ async function finish(game) {
     const awards = beaten.length ? [{ userId: game.winner, amount: winnerReward('liarsDice', beaten.length + 1) }] : [];
     if (game.startingPlayers >= 3 && runnerUp) awards.push({ userId: runnerUp.userId, amount: REWARDS.liarsDice.runnerUp });
     game.rewards = await payEach(awards, { guildId: game.guildId, game: 'Liar\'s Dice' });
+    await recordGame(game, { winners: [game.winner] });
 }
 
 // ─── Clicks ───────────────────────────────────────────────────
@@ -175,11 +191,9 @@ async function handle(game, interaction, action, arg) {
     if (!game.players.includes(userId)) return notify(interaction, 'You\'re not in this game. Join the next one!');
 
     switch (action) {
-        case 'dice': {
+        case 'dice':
             if (!(game.dice.get(userId) > 0)) return notify(interaction, 'You\'re out of dice, so you can only watch now.');
-            touch(game); // the reply is private, so the board keeps its last token
-            return interaction.reply({ ...privateView(game, userId), flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2 });
-        }
+            return openView(game, interaction, privateView(game, userId));
         case 'bid': {
             const problem = turnProblem(game, userId) ?? (canRaise(game) ? null : `Nobody can bid higher than ${bidText(game.bid)}, so call **Liar!**`);
             if (problem) return notify(interaction, problem);
@@ -201,20 +215,31 @@ async function handle(game, interaction, action, arg) {
             game.bids.push(game.bid);
             game.note = null;
             startTurn(game, nextIn(game, userId));
-            return editGame(game, render(game));
+            return redraw(game);
         }
         case 'liar': {
             const problem = turnProblem(game, userId) ?? (game.bid ? null : 'There\'s no bid to call yet. Open the bidding with **Bid…**');
             if (problem) return notify(interaction, problem);
             await callLiar(game, userId);
-            return updateBoard(game, interaction, render(game));
+            return redraw(game, interaction);
         }
-        case 'quit': { // from the private view
+        // In the private view: Leave game asks first (a live view stays open all game, so one stray
+        // click shouldn't knock you out), Stay goes back, Yes leaves
+        case 'quit':
+        case 'stay':
+            if (action === 'quit' && game.dice.get(userId) > 0) game.confirming.add(userId);
+            else game.confirming.delete(userId);
+            await interaction.update(privateView(game, userId));
+            trackView(game, interaction);
+            return touch(game, interaction);
+        case 'quityes': {
             if (!(game.dice.get(userId) > 0)) return notify(interaction, 'You\'re already out of this game.');
             touch(game, interaction);
+            dropView(game, userId);
+            game.confirming.delete(userId);
             await leave(game, userId);
             await interaction.editReply(gamePayload([`### ${TITLE}`, 'You left the game.'], COLOR));
-            return editGame(game, render(game));
+            return redraw(game);
         }
     }
 }
@@ -240,14 +265,30 @@ function bidForm(game) {
         );
 }
 
+// What only `userId` sees: their own dice, never anyone else's. Redrawn whenever the game moves on.
 function privateView(game, userId) {
+    if (game.state === 'over') {
+        const coins = game.rewards?.get(userId);
+        return gamePayload([`### ${TITLE} · game over`, `${game.winner === userId ? '🏆 You won!' : `<@${game.winner}> won the game.`}${coins ? ` ${coins}` : ''}`], COLOR);
+    }
+    if (!(game.dice.get(userId) > 0)) return gamePayload([`### ${TITLE}`, 'You\'re out of dice, so you can only watch now.'], COLOR);
+    if (game.confirming.has(userId)) {
+        return gamePayload([
+            `### ${TITLE} · leave the game?`,
+            'You\'ll be out for good, and leaving doesn\'t earn any coins.',
+            row(
+                button(`game:${game.id}:quityes`, 'Yes, leave', ButtonStyle.Danger),
+                button(`game:${game.id}:stay`, 'Stay', ButtonStyle.Secondary),
+            ),
+        ], COLOR);
+    }
     const status = game.state === 'bidding'
-        ? `${game.bid ? `Current bid: ${bidText(game.bid)} by <@${game.bid.by}>` : 'No bids yet'} · <@${game.turn}>'s turn`
-        : 'This round is over. New dice next round!';
+        ? `${game.bid ? `Current bid: ${bidText(game.bid)} by <@${game.bid.by}>` : 'No bids yet'} · ${game.turn === userId ? '**your turn**' : `<@${game.turn}>'s turn`}`
+        : `Round over: <@${game.reveal.loser}> loses a die · new dice ${at(game.nextAt)}`;
     return gamePayload([
         `### 🎲 Your dice · round ${game.round}`,
         `## ${showDice(game.rolls.get(userId))}`,
-        `${status}\n-# Ones are wild · ${diceInPlay(game)} dice in play · this view doesn't update, so press **My dice** again next round`,
+        `${status}\n-# Ones are wild · ${diceInPlay(game)} dice in play`,
         row(button(`game:${game.id}:quit`, 'Leave game', ButtonStyle.Danger)),
     ], COLOR);
 }
@@ -300,7 +341,8 @@ function render(game) {
     const parts = [
         `## ${TITLE} · Round ${game.round}`,
         playerLines(game),
-        `-# ${diceInPlay(game)} dice in play · ones are wild · bids are on 2️⃣ to 6️⃣`,
+        // Dice faces on the board only ever mean a bid (or the reveal), never someone's hidden dice
+        `-# ${diceInPlay(game)} dice in play · ones are wild · bid on faces 2 to 6`,
     ];
     if (bidding) {
         const bid = game.bid;
@@ -336,7 +378,8 @@ function start(interaction) {
     }, { begin, render });
 }
 
-// `bid` opens a form and `dice` replies privately, so those two must answer first instead of being deferred
-const deferActions = new Set([...LOBBY_ACTIONS, 'liar', 'quit']);
+// `bid` opens a form, and `quit`/`stay` redraw the private view they're in, so those answer first
+// instead of being deferred
+const deferActions = new Set([...LOBBY_ACTIONS, 'dice', 'liar', 'quityes']);
 
 module.exports = { start, handle, render, deferActions, TITLE, roller, bidProblem, countMatches };

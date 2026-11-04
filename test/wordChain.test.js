@@ -6,15 +6,17 @@ const { startDatabase, stopDatabase, clearDatabase, inspectPanel } = require('./
 const gameConfig = require('../src/config/games');
 gameConfig.LOBBY_SECONDS = 0.4;
 Object.assign(gameConfig.PARTY.wordChain, { turnSeconds: 0.5, minTurnSeconds: 0.25 });
+gameConfig.TURN_PING_SECONDS = 60; // no "your turn" pings, except in the test about them
 
 const Wallet = require('../src/models/Wallet');
+const GameStats = require('../src/models/GameStats');
 const { games } = require('../src/features/games/sessions');
 const chat = require('../src/features/games/chat');
 const router = require('../src/events/interactionCreate/router');
 const wordChain = require('../src/features/games/wordChain');
 const { winnerReward } = require('../src/features/games/scoring');
 
-const stopTimers = () => { for (const g of games.values()) clearTimeout(g.timer); };
+const stopTimers = () => { for (const g of games.values()) { clearTimeout(g.timer); clearTimeout(g.pingTimer); } };
 before(startDatabase);
 after(async () => { stopTimers(); await stopDatabase(); });
 beforeEach(async () => {
@@ -25,6 +27,8 @@ beforeEach(async () => {
 });
 
 const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.balance ?? 0;
+// { userId: { played, wins, best } } for Word Chain
+const stats = async () => Object.fromEntries((await GameStats.find({ game: 'wordChain' }).lean()).map(r => [r.userId, { played: r.played, wins: r.wins, best: r.best }]));
 const text = (payload) => JSON.stringify(payload.components.map(c => c.toJSON()));
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(check, ms = 3000) {
@@ -35,9 +39,12 @@ async function until(check, ms = 3000) {
     }
 }
 
-// Every edit of the shared game message, from any interaction, in order
+// Every edit of the shared game message, from any interaction, in order; public follow-ups (turn
+// pings) and the ones deleted again
 let screens = [];
-beforeEach(() => { screens = []; });
+let sent = [];
+let deleted = [];
+beforeEach(() => { screens = []; sent = []; deleted = []; });
 const latest = () => text(screens.at(-1));
 
 // A stand-in interaction on the /games message (m1) in channel c1, which the bot can see unless told otherwise
@@ -56,7 +63,14 @@ function fake({ userId = 'p1', customId, canSee = true, messageId = 'm1' } = {})
         update: async (p) => { screens.push(p); i.replied = true; },
         deferUpdate: async () => { i.deferred = true; },
         editReply: async (p) => { screens.push(p); },
-        followUp: async (p) => { calls.replies.push(p); },
+        followUp: async (p) => {
+            calls.replies.push(p);
+            if (p.flags) return null; // a private notice
+            const message = { id: `f${sent.length + 1}`, ...p };
+            sent.push(message);
+            return message;
+        },
+        deleteReply: async (id) => { deleted.push(id); },
     };
     return { i, calls };
 }
@@ -155,6 +169,11 @@ test('word chain: running out of time puts you out; the last one in wins and wor
     assert.equal(await balanceOf('p1'), p1Coins);
     assert.equal(await balanceOf('p3'), 1);
     assert.equal(await balanceOf('p2'), 0);
+    assert.deepEqual(await stats(), {
+        p1: { played: 1, wins: 1, best: 2 },
+        p2: { played: 1, wins: 0, best: 0 },
+        p3: { played: 1, wins: 0, best: 1 },
+    }, 'recorded once, with words played as the score');
 });
 
 test('word chain: coins per word stop at the most words counted', async () => {
@@ -177,6 +196,39 @@ test('word chain: the host can end it early; words so far are paid, with no winn
     assert.doesNotMatch(latest(), /wins/);
     assert.equal(await balanceOf('p1'), 1);
     assert.match(notice(await click(game, 'p1', 'end')), /This game has ended/);
+    assert.deepEqual(await stats(), { p1: { played: 1, wins: 0, best: 1 }, p2: { played: 1, wins: 0, best: 0 } });
+});
+
+test('word chain: whoever\'s turn it is gets one ping if they wait, removed when the turn ends', async () => {
+    gameConfig.TURN_PING_SECONDS = 0.1;
+    try {
+        const game = await startGame();
+        await click(game, 'p1', 'begin');
+        game.letter = 'a';
+        await until(() => sent.length === 1);
+        assert.match(sent[0].content, /<@p1>, it's your turn in \*\*🔗 Word Chain\*\*/);
+        assert.deepEqual(sent[0].allowedMentions, { users: ['p1'] }, 'only they are pinged');
+        await wait(200);
+        assert.equal(sent.length, 1, 'just once per turn');
+
+        // The ping is the bot's own message in the channel: it never counts as a word
+        await chat.handleMessage({ author: { id: 'me', bot: true }, content: sent[0].content, channelId: 'c1', react: async () => assert.fail('reacted to the ping') });
+        assert.equal(game.chain.length, 0);
+
+        assert.deepEqual(await say('p1', 'apple'), ['✅']);
+        assert.deepEqual(deleted, ['f1'], 'removed once they play');
+        assert.deepEqual(await say('p2', 'eagle'), ['✅']); // straight away: no ping for p2
+        await until(() => sent.length === 2);
+        assert.match(sent[1].content, /<@p1>/);
+        assert.ok(!sent.some(m => /<@p2>/.test(m.content)), 'p2 played before their ping was due');
+
+        await click(game, 'p1', 'end');
+        assert.deepEqual(deleted, ['f1', 'f2'], 'the game ending removes the ping too');
+        await wait(200);
+        assert.equal(sent.length, 2, 'nothing goes out after the game ends');
+    } finally {
+        gameConfig.TURN_PING_SECONDS = 60;
+    }
 });
 
 test('word chain: refused where the bot can\'t read chat, or where a chat game is already running', async () => {
@@ -189,6 +241,7 @@ test('word chain: refused where the bot can\'t read chat, or where a chat game i
     assert.equal(games.size, 1);
 
     await click(onlyGame(), 'p1', 'cancel');
+    assert.deepEqual(await stats(), {}, 'a called-off lobby isn\'t a game played');
     await press('games:start:p2:scramble:', 'p2');
     assert.equal(onlyGame().type, 'scramble', 'free again once the game is over');
 });

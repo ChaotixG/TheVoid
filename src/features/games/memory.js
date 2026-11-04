@@ -4,6 +4,7 @@ const { memoryReward } = require('./scoring');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
+const { recordGame } = require('./stats');
 const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 
 const TITLE = '🃏 Memory';
@@ -69,6 +70,7 @@ async function handle(game, interaction, action, arg) {
     if (action === 'giveup') {
         game.state = 'lost';
         endGame(game);
+        await recordGame(game);
         return updateBoard(game, interaction, render(game));
     }
     if (action !== 'flip') return interaction.deferUpdate();
@@ -80,6 +82,7 @@ async function handle(game, interaction, action, arg) {
         endGame(game);
         await interaction.deferUpdate();
         game.reward = await payGameReward(interaction.user.id, memoryReward(game.moves, FACES.length), { guildId: game.guildId, game: 'Memory' });
+        await recordGame(game, { winners: game.players, scores: { [game.players[0]]: game.moves } });
     }
     return updateBoard(game, interaction, render(game));
 }
