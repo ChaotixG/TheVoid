@@ -30,6 +30,8 @@ const walletSchema = new Schema({
 		outline: themePart(['solid', 'gradient']),
 		hasImage: { type: Boolean, default: false },
 	},
+	// Premium, given by the bot owner (services/premium.js): when it ends (year 9999 = for good)
+	premiumUntil: { type: Date, default: null },
 	// Coins won from games today (UTC), for the daily game cap
 	gameDay: { type: String, default: null },
 	gameEarned: { type: Number, default: 0 },

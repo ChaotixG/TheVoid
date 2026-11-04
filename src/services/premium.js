@@ -1,52 +1,56 @@
-// Premium is controlled only by the bot owner: someone is premium while they have one of the
-// PREMIUM_ROLE_IDS in the PREMIUM_GUILD_ID server (e.g. a Server Subscription, Patreon or Ko-fi
-// role there). It applies in every server. Server admins can't grant it, so economies stay equal.
+// Premium is given only by the bot's owner: with /botowner premium, or by setting premiumUntil on
+// the person's wallet in the database. It's per person, lasts a number of days or for good, and
+// works in every server. Server owners and admins can't give it, so economies stay equal.
+// (Buying it through Discord comes later.)
+const Wallet = require('../models/Wallet');
 const { PREMIUM } = require('../config/economy');
-const { warn } = require('./logger');
 
-const CACHE_MS = 5 * 60_000;
-const cache = new Map(); // userId → { value, expires }
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FOREVER = new Date('9999-12-31T23:59:59Z');
+const CACHE_MS = 60_000; // a change made straight in the database applies within a minute
+const cache = new Map(); // userId → { until, expires }
 
-const premiumConfig = () => ({
-    guildId: process.env.PREMIUM_GUILD_ID || null,
-    roleIds: (process.env.PREMIUM_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
-    url: process.env.PREMIUM_URL || null,
-});
-
-const premiumEnabled = () => {
-    const { guildId, roleIds } = premiumConfig();
-    return Boolean(guildId && roleIds.length);
-};
-
-async function isPremium(client, userId) {
-    if (!premiumEnabled()) return false;
+/** When this person's premium ends (a Date), or null if they don't have it */
+async function premiumUntil(userId) {
     const hit = cache.get(userId);
-    if (hit && hit.expires > Date.now()) return hit.value;
-
-    // Cache only: the premium server's members are loaded at startup (primePremiumMembers) and kept
-    // current by Discord, so someone missing from it isn't a member there, and no API call is needed
-    const { guildId, roleIds } = premiumConfig();
-    const member = client.guilds.cache.get(guildId)?.members.cache.get(userId);
-    const value = Boolean(member && roleIds.some(id => member.roles.cache.has(id)));
-    cache.set(userId, { value, expires: Date.now() + CACHE_MS });
-    return value;
+    if (hit && hit.expires > Date.now()) return hit.until && hit.until > Date.now() ? hit.until : null;
+    const wallet = await Wallet.findOne({ userId }, { premiumUntil: 1 }).lean();
+    const until = wallet?.premiumUntil && wallet.premiumUntil > Date.now() ? wallet.premiumUntil : null;
+    cache.set(userId, { until, expires: Date.now() + CACHE_MS });
+    return until;
 }
 
-// Called when roles change in the premium server, so new subscribers get perks right away
+async function isPremium(client, userId) {
+    return Boolean(await premiumUntil(userId));
+}
+
+const isForever = (until) => until.getUTCFullYear() >= FOREVER.getUTCFullYear();
+
+// After a change, the next check reads the database again
 function forgetPremium(userId) {
     cache.delete(userId);
 }
 
-// Loads every member of the premium server once at startup (needs the Server Members intent)
-async function primePremiumMembers(client) {
-    if (!premiumEnabled()) return;
-    const guild = client.guilds.cache.get(premiumConfig().guildId);
-    if (!guild) return warn('PREMIUM_GUILD_ID is set, but I\'m not in that server, so nobody can be premium.');
-    await guild.members.fetch().catch(err => warn(`Could not load premium server members: ${err.message}`));
+/** Gives premium for `days` more (on top of any they still have), or for good without `days`. Returns the new end. */
+async function grantPremium(userId, days = null) {
+    forgetPremium(userId);
+    const current = await premiumUntil(userId);
+    const until = days ? new Date((current ?? new Date()).getTime() + days * DAY_MS) : FOREVER;
+    await Wallet.updateOne({ userId }, { $set: { premiumUntil: until } }, { upsert: true });
+    forgetPremium(userId);
+    return until;
+}
+
+/** Takes premium away. Returns whether they had it. */
+async function removePremium(userId) {
+    const had = Boolean(await premiumUntil(userId));
+    await Wallet.updateOne({ userId }, { $set: { premiumUntil: null } });
+    forgetPremium(userId);
+    return had;
 }
 
 async function coinMultiplier(client, userId) {
     return (await isPremium(client, userId)) ? PREMIUM.coinMultiplier : 1;
 }
 
-module.exports = { isPremium, forgetPremium, premiumEnabled, premiumConfig, coinMultiplier, primePremiumMembers };
+module.exports = { isPremium, premiumUntil, isForever, grantPremium, removePremium, forgetPremium, coinMultiplier };

@@ -15,7 +15,7 @@ const Transaction = require('../src/models/Transaction');
 const RolePurchase = require('../src/models/RolePurchase');
 const { runMigrations } = require('../src/database/migrations');
 const { getGuildSettings, updateGuildSettings } = require('../src/services/guildSettings');
-const { forgetPremium } = require('../src/services/premium');
+const { forgetPremium, grantPremium, removePremium, premiumUntil, isPremium } = require('../src/services/premium');
 const { claimDaily } = require('../src/features/economy/rewards');
 const { isActiveInVoice, payVoiceActivity } = require('../src/features/economy/voiceActivity');
 const { renderLeaderboard } = require('../src/features/leveling/leaderboard');
@@ -28,8 +28,6 @@ before(startDatabase);
 after(stopDatabase);
 beforeEach(async () => {
     await clearDatabase();
-    delete process.env.PREMIUM_GUILD_ID;
-    delete process.env.PREMIUM_ROLE_IDS;
     for (const id of ['u1', 'u2', 'u3']) forgetPremium(id);
 });
 
@@ -37,12 +35,10 @@ const HOUR = 3600_000;
 const noClient = { guilds: { cache: new Collection() } };
 const balanceOf = async (userId) => (await Wallet.findOne({ userId }).lean())?.balance ?? 0;
 
-// A client whose premium server gives `premiumUserIds` the premium role
-function premiumClient(premiumUserIds) {
-    process.env.PREMIUM_GUILD_ID = 'home';
-    process.env.PREMIUM_ROLE_IDS = 'supporter';
-    const members = new Collection(premiumUserIds.map(id => [id, { roles: { cache: new Collection([['supporter', {}]]) } }]));
-    return { guilds: { cache: new Collection([['home', { members: { cache: members, fetch: async () => null } }]]) } };
+// Gives these people premium (as the bot owner would) and returns a client for the calls
+async function premiumClient(premiumUserIds) {
+    for (const id of premiumUserIds) await grantPremium(id);
+    return noClient;
 }
 
 function fakeCommand({ userId = 'u1', guildId = 'g1', options = {} } = {}) {
@@ -94,8 +90,8 @@ test('/daily pays once per 24 hours across all servers, and streaks grow then re
     assert.equal(await Transaction.countDocuments({ userId: 'u1', type: 'daily' }), 3);
 });
 
-test('premium comes only from the owner\'s server role and doubles /daily', async () => {
-    const client = premiumClient(['u1']);
+test('premium (given by the bot owner) doubles /daily', async () => {
+    const client = await premiumClient(['u1']);
     assert.equal((await claimDaily(client, 'u1', 'g1')).amount, 400);
     assert.equal((await claimDaily(client, 'u2', 'g1')).amount, 200);
 });
@@ -113,6 +109,55 @@ test('/pay moves coins minus tax and can never overdraw, even when spammed', asy
     const self = fakeCommand({ options: { user: { id: 'u1', bot: false }, amount: 10 } });
     await pay.callback(noClient, self.interaction);
     assert.match(self.out[0], /can't pay yourself/);
+});
+
+test('premium: the bot owner gives it for days (adding up) or for good, it runs out on time, and can be taken away', async () => {
+    const DAY = 24 * HOUR;
+    const first = await grantPremium('u1', 30);
+    assert.ok(Math.abs(first - (Date.now() + 30 * DAY)) < 5000);
+    const extended = await grantPremium('u1', 10);
+    assert.ok(Math.abs(extended - first - 10 * DAY) < 5000, 'more days are added to what they still have');
+    assert.equal(await isPremium(noClient, 'u1'), true);
+
+    // Ran out (e.g. set straight in the database): no longer premium once the short cache is cleared
+    await Wallet.updateOne({ userId: 'u1' }, { $set: { premiumUntil: new Date(Date.now() - 1000) } });
+    forgetPremium('u1');
+    assert.equal(await isPremium(noClient, 'u1'), false);
+    assert.ok(Math.abs(await grantPremium('u1', 1) - (Date.now() + DAY)) < 5000, 'a new grant after it ran out counts from now');
+
+    assert.equal((await grantPremium('u2')).getUTCFullYear(), 9999, 'for good');
+    assert.equal(await removePremium('u2'), true);
+    assert.equal(await premiumUntil('u2'), null);
+    assert.equal(await removePremium('u2'), false, 'nothing to take');
+});
+
+test('/botowner: only the bot\'s owner can use it, never a server owner or admin', async () => {
+    const botowner = require('../src/commands/owner/botowner');
+    assert.equal(botowner.botOwnerOnly, true, 'only registered in the owner\'s own server');
+    const run = async (userId, sub, options = {}) => {
+        let answer;
+        const client = { application: { owner: { id: 'boss' }, fetch: async () => {} } };
+        await botowner.callback(client, {
+            user: { id: userId },
+            options: { getUser: () => ({ id: 'u3', bot: false, send: async () => {} }), getInteger: (n) => options[n] ?? null, getSubcommand: () => sub },
+            reply: async (p) => { answer = p.content; },
+        });
+        return answer;
+    };
+    assert.match(await run('serverOwner', 'give'), /Only the bot's owner/);
+    assert.equal(await premiumUntil('u3'), null);
+    assert.match(await run('boss', 'give', { days: 7 }), /has premium until <t:\d+:F>/);
+    assert.match(await run('boss', 'check'), /has premium until/);
+    assert.match(await run('boss', 'remove'), /Took premium away/);
+    assert.match(await run('boss', 'check'), /doesn't have premium/);
+
+    process.env.OWNER_IDS = 'helper1, helper2';
+    try {
+        assert.match(await run('helper2', 'give'), /has premium for good/, 'OWNER_IDS can name the owners instead');
+        assert.match(await run('boss', 'remove'), /Only the bot's owner/);
+    } finally {
+        delete process.env.OWNER_IDS;
+    }
 });
 
 test('chat coins pay once per minute per person, across all servers', async () => {
@@ -356,7 +401,7 @@ const isBlue = ([r, , b]) => b > 180 && r < 75;
 async function customWorld(balance = 20_000) {
     const world = shopWorld({ balance });
     await world.setup();
-    world.interaction.client = premiumClient(['u1']);
+    world.interaction.client = await premiumClient(['u1']);
     return world;
 }
 const customOf = async () => (await Wallet.findOne({ userId: 'u1' }).lean()).customTheme;
@@ -384,8 +429,9 @@ test('custom theme: premium + 10,000 coins; extra directions cost 2,500 each and
     const world = await customWorld();
     const { interaction } = world;
 
-    assert.match(await shop.buyCustomTheme({ ...interaction, client: noClient }), /premium members/);
-    forgetPremium('u1'); // premium answers are cached
+    await removePremium('u1');
+    assert.match(await shop.buyCustomTheme(interaction), /premium members/);
+    await grantPremium('u1');
     assert.match(await shop.buyCustomTheme(interaction), /unlocked and equipped/);
     assert.match(await shop.buyCustomTheme(interaction), /already own/);
     assert.equal(await balanceOf('u1'), 10_000);
@@ -421,13 +467,13 @@ test('custom theme: premium + 10,000 coins; extra directions cost 2,500 each and
     const theme = await resolveCardTheme(interaction.client, 'u1');
     assert.equal(theme.id, 'custom');
     assert.equal(theme.borderGradient.direction, 'bt');
-    forgetPremium('u1');
+    await removePremium('u1');
     assert.equal((await resolveCardTheme(noClient, 'u1')).id, 'default', 'premium lapsed: back to the default card');
 });
 
 test('custom theme: works for wallets saved with the old custom-colors fields', async () => {
     await Wallet.collection.insertOne({ userId: 'u1', balance: 20_000, customTheme: { background: null, background2: null, accent: null, accent2: null } });
-    const interaction = { ...shopWorld().interaction, client: premiumClient(['u1']) };
+    const interaction = { ...shopWorld().interaction, client: await premiumClient(['u1']) };
     assert.equal((await resolveCardTheme(interaction.client, 'u1')).id, 'default');
     assert.match(await shop.buyCustomTheme(interaction), /unlocked and equipped/);
     assert.match(await shop.setPartMode(interaction, 'outline', 'gradient'), /gradient/);

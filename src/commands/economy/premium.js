@@ -1,5 +1,5 @@
 const { ApplicationIntegrationType, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
-const { isPremium, premiumEnabled, premiumConfig } = require('../../services/premium');
+const { premiumUntil, isForever } = require('../../services/premium');
 const { PREMIUM, CUSTOM_CARD_COLORS_ENABLED } = require('../../config/economy');
 
 module.exports = {
@@ -10,21 +10,19 @@ module.exports = {
         .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     callback: async (client, interaction) => {
-        if (!premiumEnabled()) {
-            return interaction.reply({ content: 'Premium isn\'t available yet.', flags: MessageFlags.Ephemeral });
-        }
-        const premium = await isPremium(client, interaction.user.id);
-        const { url } = premiumConfig();
+        const until = await premiumUntil(interaction.user.id);
+        const status = !until ? ''
+            : isForever(until) ? ' · yours for good, thank you!'
+                : ` · yours until <t:${Math.floor(until / 1000)}:D> (<t:${Math.floor(until / 1000)}:R>)`;
 
         await interaction.reply({
             content: [
-                `## ⭐ Premium${premium ? ' · you have it, thank you!' : ''}`,
+                `## ⭐ Premium${status}`,
                 `- ×${PREMIUM.dailyMultiplier} **/daily** and **/weekly** rewards`,
                 `- ×${PREMIUM.coinMultiplier} coins from chatting and voice`,
                 `- +${Math.round((PREMIUM.xpMultiplier - 1) * 100)}% XP`,
                 CUSTOM_CARD_COLORS_ENABLED ? '- The custom **/rank** card theme: your own colors, gradients and background picture (in **/shop**)' : null,
-                '-# Premium works in every server I\'m in.',
-                !premium && url ? `**Get premium:** ${url}` : null,
+                `-# Premium works in every server I'm in.${until ? '' : ' It can\'t be bought yet, so stay tuned!'}`,
             ].filter(Boolean).join('\n'),
             flags: MessageFlags.Ephemeral,
         });
