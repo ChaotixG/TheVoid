@@ -131,8 +131,8 @@ test('games menu: a second Start click doesn\'t start a second game; a refused s
     await press('games:start:p1:triviaParty:any', 'p1');
     assert.equal(games.size, 1, 'one game on the message');
 
-    // Scramble claims channel c1, so a second chat game there is refused with a private notice.
-    // The menu is still removed later, through the click whose reply is the menu (not the notice).
+    // Scramble claims channel c1, so a second chat game there is refused with a private notice,
+    // and the menu stays until its cleanup removes it
     await press('games:start:p1:scramble:', 'p1', { messageId: 'm3' });
     gameConfig.MENU_MINUTES = 0.01;
     try {
@@ -141,8 +141,7 @@ test('games menu: a second Start click doesn\'t start a second game; a refused s
         const refused = await press('games:start:p2:scramble:', 'p2', { messageId: 'm2' });
         assert.match(notice(refused), /already running/);
         await wait(800);
-        assert.equal(opened.calls.deleted, true);
-        assert.equal(refused.deleted, undefined);
+        assert.equal(refused.deleted, true, 'Start was acknowledged on the menu, so that click removes it later');
     } finally {
         gameConfig.MENU_MINUTES = 5;
     }

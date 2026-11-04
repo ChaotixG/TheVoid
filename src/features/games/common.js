@@ -1,5 +1,6 @@
 // Shared pieces for game panels: board updates, player checks and two-player challenges.
-// Games are started from the /games menu (features/games/menu.js), which becomes the game message.
+// Games are started from the /games menu (features/games/menu.js).
+const { MessageFlags } = require('discord.js');
 const { CHALLENGE_SECONDS } = require('../../config/games');
 const { container, row, button, panelPayload, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
@@ -13,15 +14,28 @@ const gamePayload = (parts, color, mentions = []) => ({
 });
 
 /**
- * Shows a new game: in place of the /games menu it was started from, in a reply that was deferred
- * (Play again posts a new message), or as a reply to a command. Records the message on the
- * interaction (`gameMessage`) so the game knows where it lives.
+ * Shows a new game where it belongs. The /games menu is private, so:
+ * - a game for everyone (party games, challenges, trivia races; the menu sets `gameVisibility`
+ *   to 'public') is posted in the channel, and the menu closes;
+ * - a private game (solo, against the bot) takes the menu's place, still only seen by the player;
+ * - otherwise it fills a deferred reply (Play again's new message) or answers a command.
+ * Records on the interaction where the game is (`gameMessage`) and, for a posted game, how to
+ * edit it later (`gameEdit`), for touch().
  */
 async function showGame(interaction, payload) {
     let message;
-    if (interaction.deferred || interaction.replied) message = await interaction.editReply(payload);
-    else if (interaction.isMessageComponent?.()) message = (await interaction.update({ ...payload, withResponse: true }))?.resource?.message;
-    else message = (await interaction.reply({ ...payload, withResponse: true }))?.resource?.message;
+    if (interaction.gameVisibility === 'public' && interaction.message?.flags?.has?.(MessageFlags.Ephemeral)) {
+        if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+        message = await interaction.followUp(payload);
+        await interaction.deleteReply().catch(() => {}); // the private menu's job is done
+        interaction.gameEdit = (p) => interaction.webhook.editMessage(message.id, p);
+    } else if (interaction.deferred || interaction.replied) {
+        message = await interaction.editReply(payload);
+    } else if (interaction.isMessageComponent?.()) {
+        message = (await interaction.update({ ...payload, withResponse: true }))?.resource?.message;
+    } else {
+        message = (await interaction.reply({ ...payload, withResponse: true }))?.resource?.message;
+    }
     interaction.gameMessage = message ?? interaction.message;
     return message;
 }

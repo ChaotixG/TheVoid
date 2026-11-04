@@ -42,14 +42,19 @@ async function recordGame(game, { winners = [], scores = {} } = {}) {
     await GameStats.bulkWrite(ops).catch(err => warn(`Could not save stats for game ${game.id}: ${err.message}`));
 }
 
-/** One line per game this person has played: "12 played · 9 wins · best 2 guesses" */
+/**
+ * This person's stats: `lines` has one line per game they've played ("12 games · 9 wins · best
+ * 2 guesses"), plus totals of games `played` and `wins`
+ */
 async function statsFor(userId) {
     const rows = await GameStats.find({ userId }).lean();
-    return new Map(rows.map(r => [r.game, [
+    const lines = new Map(rows.map(r => [r.game, [
         plural(r.played ?? 0, 'game'),
         HAS_WINS.has(r.game) ? plural(r.wins ?? 0, 'win') : null,
         Number.isFinite(r.best) && BEST[r.game] ? `best ${BEST[r.game].show(r.best)}` : null,
     ].filter(Boolean).join(' · ')]));
+    const total = (field) => rows.reduce((sum, r) => sum + (r[field] ?? 0), 0);
+    return { lines, played: total('played'), wins: total('wins') };
 }
 
 module.exports = { recordGame, statsFor };

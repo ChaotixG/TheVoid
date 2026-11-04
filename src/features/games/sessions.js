@@ -42,12 +42,18 @@ function runExclusive(game, fn) {
 
 // Remember the latest interaction on the game message: its token lets us edit the message later
 // (expiry, timers). Clicks in someone's private view (e.g. their hand of cards) can't edit it.
+// Solo games and games against the bot are private themselves (only the player sees the game).
 function touch(game, interaction) {
     game.lastActivity = Date.now();
-    if (!interaction || interaction.message?.flags?.has?.(MessageFlags.Ephemeral)) return;
-    game.lastInteraction = interaction;
-    // Where the game is shown, for edits once tokens expire (showGame records it for new messages)
+    if (!interaction) return;
+    // Where the game is shown (showGame records it when it puts the game in a new message)
     const message = interaction.gameMessage ?? interaction.message;
+    if (!game.message) game.private = Boolean(message?.flags?.has?.(MessageFlags.Ephemeral));
+    const inPrivateView = !interaction.gameMessage && !game.private && interaction.message?.flags?.has?.(MessageFlags.Ephemeral);
+    if (inPrivateView || (game.message && message && message.id !== game.message.id)) return;
+    game.lastInteraction = interaction;
+    // How this interaction edits the game message: its own reply, unless showGame says otherwise
+    game.edit = interaction.gameEdit ?? ((payload) => interaction.editReply(payload));
     if (message) game.message = message;
 }
 
@@ -74,9 +80,9 @@ async function editGame(game, payload) {
     const latest = game.lastInteraction;
     const finalPayload = withEndButtons(game, payload);
     try {
-        if (tokenFresh(latest)) return await latest.editReply(finalPayload);
+        if (tokenFresh(latest)) return await (game.edit ?? ((p) => latest.editReply(p)))(finalPayload);
         const message = game.message;
-        if (!message) return;
+        if (!message || game.private) return; // only interactions can edit a private game
         // Threads and forum posts may not be loaded yet
         if (!message.channel && message.client) await message.client.channels.fetch(message.channelId);
         await message.edit(finalPayload);

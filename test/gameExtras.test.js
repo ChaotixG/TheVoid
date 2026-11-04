@@ -34,13 +34,13 @@ beforeEach(() => { screens = []; });
 const latest = () => text(screens.at(-1));
 
 // A stand-in interaction on a message (m1 unless given) that records what the bot answered
-function fake({ userId = 'p1', customId, values, users, options = {}, messageId = 'm1', appPermissions } = {}) {
+function fake({ userId = 'p1', customId, values, users, options = {}, messageId = 'm1', appPermissions, ephemeralMessage = false } = {}) {
     const calls = { replies: [], shown: [], deleted: [] };
     const show = (p) => { calls.shown.push(p); screens.push(p); };
     const i = {
         user: { id: userId }, guildId: 'g1', channelId: 'c1', customId, values, users, appPermissions,
         guild: { members: { me: {} } }, channel: { permissionsFor: () => ({ has: () => true }) },
-        message: { id: messageId, edit: async (p) => show(p) },
+        message: { id: messageId, edit: async (p) => show(p), flags: { has: () => ephemeralMessage } },
         createdTimestamp: Date.now(),
         client: { user: { id: 'me' } },
         options: { getString: (n) => options[n] ?? null },
@@ -51,7 +51,7 @@ function fake({ userId = 'p1', customId, values, users, options = {}, messageId 
         deferUpdate: async () => { i.deferred = true; },
         deferReply: async () => { i.deferred = true; calls.newMessage = true; },
         editReply: async (p) => { show(p); },
-        followUp: async (p) => { calls.replies.push(p); return { id: `f${calls.replies.length}` }; },
+        followUp: async (p) => { calls.replies.push(p); return { id: `f${calls.replies.length}`, flags: { has: () => (p.flags & 64) === 64 } }; },
         deleteReply: async (id = '@original') => { calls.deleted.push(id); },
         webhook: { editMessage: async (id, p) => { calls.edited = { id, p }; } },
     };
@@ -80,7 +80,54 @@ test('finished games get Play again and Games; Play again starts a new game belo
     assert.equal(onlyGame().replay.type, 'wordle', 'it can be played again too');
 
     const menu = await press(`games:menu:${game.id}`, 'p3');
-    assert.match(text(menu.replies[0]), /<@p3>'s menu/);
+    assert.match(text(menu.replies[0]), /games:tab:p3:solo/);
+    assert.equal(menu.replies[0].flags & 64, 64, 'the menu is private');
+});
+
+// ─── Who sees what ────────────────────────────────────────────
+test('the menu is private; party games and challenges are posted for everyone; solo games and games against me stay private', async () => {
+    const menu = fake({ userId: 'p1' });
+    await require('../src/features/games/menu').openMenu(menu.i);
+    assert.equal(menu.calls.replies[0].flags & 64, 64, 'only the opener sees the menu');
+
+    // A lobby is posted in the channel and the private menu closes; later edits go to that post
+    const party = await press('games:start:p1:triviaParty:any', 'p1', { ephemeralMessage: true });
+    assert.equal(party.replies[0].flags & 64, 0, 'the lobby is public');
+    assert.deepEqual(party.deleted, ['@original'], 'the private menu is gone');
+    const lobby = onlyGame();
+    assert.equal(lobby.private, false);
+    await editGame(lobby, gamePayload(['an update'], 0));
+    assert.equal(party.edited.id, 'f1', 'timers edit the posted lobby, not the closed menu');
+    games.clear();
+
+    const challenge = await press(`games:start:p1:connect4:${friend}`, 'p1', { ephemeralMessage: true });
+    assert.equal(challenge.replies[0].flags & 64, 0, 'a challenge is public');
+    assert.deepEqual(challenge.replies[1].allowedMentions, { users: [friend] });
+    games.clear();
+
+    for (const [id, state] of [['wordle', ''], ['connect4', 'bot'], ['trivia', 'solo.any']]) {
+        const solo = await press(`games:start:p1:${id}:${state}`, 'p1', { ephemeralMessage: true });
+        assert.equal(solo.replies.length, 0, `${id}: nothing posted in the channel`);
+        assert.equal(solo.deleted.length, 0, `${id}: the menu becomes the game`);
+        if (games.size) assert.equal(onlyGame().private, true, `${id}: a private game`);
+        for (const g of games.values()) clearTimeout(g.timer);
+        games.clear();
+    }
+});
+
+test('Show in channel posts a stats card everyone can see', async () => {
+    await recordGame({ type: 'wordle', players: ['p1'] }, { winners: ['p1'], scores: { p1: 3 } });
+    await recordGame({ type: 'crazyEights', players: ['p1', 'p2'] }, { winners: ['p1'] });
+    const shared = await press('games:share:p1', 'p1', { ephemeralMessage: true });
+    const card = shared.replies[0];
+    assert.equal(card.flags & 64, 0, 'public');
+    assert.match(text(card), /Game stats/);
+    assert.match(text(card), /<@p1> · 2 games · 2 wins/);
+    assert.match(text(card), /Solo\*\*\\n🟩 \*\*Wordle\*\* · 1 game · best 3 guesses/);
+    assert.match(text(card), /Party\*\*\\n🎴 \*\*Crazy Eights\*\* · 1 game · 1 win/);
+    assert.deepEqual(card.allowedMentions, { parse: [] }, 'nobody is pinged');
+    assert.match(latest(), /posted in the channel/);
+    assert.ok(inspectPanel(card).count <= 40);
 });
 
 test('rematch: a party lobby invites the same players back (they choose to join); a two-player rematch challenges the other player', async () => {
@@ -210,7 +257,9 @@ test('stats: played, wins and best score add up across games; the Stats tab show
     const wordle = await GameStats.findOne({ userId: 'p1', game: 'wordle' }).lean();
     assert.deepEqual([wordle.played, wordle.wins, wordle.best], [3, 2, 2], 'fewest guesses is best');
     assert.equal(await GameStats.countDocuments({ userId: 'bot' }), 0, 'the bot isn\'t a player');
-    assert.equal((await statsFor('p1')).get('wordle'), '3 games · best 2 guesses');
+    const stats = await statsFor('p1');
+    assert.equal(stats.lines.get('wordle'), '3 games · best 2 guesses');
+    assert.deepEqual([stats.played, stats.wins], [4, 3]);
 
     await press('games:tab:p1:stats', 'p1');
     assert.match(latest(), /Wordle\*\* · 3 games · best 2 guesses/);

@@ -1,11 +1,12 @@
-// /games: one menu for every game. It's posted in the channel and only its opener can use it.
-// Starting a game turns the menu message into the game (or into a party game's lobby).
+// /games: one menu for every game, private to whoever opened it. Games meant for others (party
+// games, challenges, trivia races) are posted in the channel so people can join; solo games and
+// games against the bot stay private, taking the menu's place.
 // Stateless like other panels: the chosen game and options travel in the custom IDs
 // ("games:<action>:<ownerId>:<gameId>:..."), so the menu keeps working after a restart.
-const { StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
+const { MessageFlags, SectionBuilder, StringSelectMenuBuilder, ThumbnailBuilder, UserSelectMenuBuilder } = require('discord.js');
 const gameConfig = require('../../config/games');
 const { DAILY_CAP, REWARDS, PARTY, HANGMAN, WORDLE } = gameConfig;
-const { container, separator, row, section, button, panelPayload, ButtonStyle } = require('../../utils/panels');
+const { text, container, separator, row, section, button, panelPayload, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { hangmanReward, minesweeperReward, connect4Reward } = require('./scoring');
 const { gameCoinsToday } = require('./rewards');
@@ -145,6 +146,12 @@ function decode(entry, text = '') {
 // ─── Drawing ──────────────────────────────────────────────────
 const hasChoices = (entry) => Boolean(entry.options || entry.opponent);
 
+// Who sees a game: games for others (party games, challenges, trivia races) are posted in the
+// channel; solo games and games against me stay private to the player
+const isPublic = (entry, values) => entry.category === 'party'
+    || (entry.opponent && values.opponentId !== BOT)
+    || (entry.id === 'trivia' && values.mode === 'race');
+
 // One game in a tab: what it is and what it pays, with Play (or Set up) beside it
 function gameSection(ownerId, entry) {
     return section(
@@ -183,22 +190,44 @@ function setupView(ownerId, entry, chosen) {
 }
 
 // The Stats tab: the owner's record in each game they've finished, across all servers
-function statsView(stats) {
-    const lines = CATALOG.filter(g => stats.has(g.id)).map(g => `${g.emoji} **${g.name}** · ${stats.get(g.id)}`);
-    return [lines.length
-        ? `### 📊 Your stats\n${lines.join('\n')}\n-# Across every server.`
-        : '### 📊 Your stats\nNo finished games yet. Pick one from the other tabs!'];
+function statsView(ownerId, stats) {
+    const lines = CATALOG.filter(g => stats.lines.has(g.id)).map(g => `${g.emoji} **${g.name}** · ${stats.lines.get(g.id)}`);
+    if (!lines.length) return ['### 📊 Your stats\nNo finished games yet. Pick one from the other tabs!'];
+    return [
+        `### 📊 Your stats\n${lines.join('\n')}\n-# Across every server.`,
+        row(button(`games:share:${ownerId}`, 'Show in channel', ButtonStyle.Primary, { emoji: '📢' })),
+    ];
+}
+
+const count = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
+/** The stats card that Show in channel posts for everyone to see, grouped like the menu's tabs */
+function statsCard(user, stats) {
+    const header = `## 📊 Game stats\n<@${user.id}> · ${count(stats.played, 'game')} · ${count(stats.wins, 'win')}\n-# Across every server`;
+    const avatar = user.displayAvatarURL?.({ size: 128 });
+    const groups = Object.entries(CATEGORIES).map(([category, c]) => {
+        const lines = CATALOG.filter(g => g.category === category && stats.lines.has(g.id)).map(g => `${g.emoji} **${g.name}** · ${stats.lines.get(g.id)}`);
+        return lines.length ? `**${c.emoji} ${c.name}**\n${lines.join('\n')}` : null;
+    });
+    return {
+        ...panelPayload(container([
+            avatar ? new SectionBuilder().addTextDisplayComponents(text(header)).setThumbnailAccessory(new ThumbnailBuilder().setURL(avatar)) : header,
+            separator(),
+            ...groups,
+        ], COLOR)),
+        allowedMentions: { parse: [] },
+    };
 }
 
 /**
  * The menu: a tab of games, one game's setup, or the Stats tab. `coinsToday` (game coins won today)
  * is shown in the header when given; `stats` (from statsFor) fills the Stats tab.
  */
-function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notice = null, coinsToday = null, stats = new Map() } = {}) {
+function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notice = null, coinsToday = null, stats = { lines: new Map() } } = {}) {
     const entry = CATALOG.find(g => g.id === gameId);
     const current = entry?.category ?? (TABS[tab] ? tab : 'solo');
     const parts = [
-        `## 🎮 Games\n-# <@${ownerId}>'s menu · only they can use it` +
+        '## 🎮 Games\n-# Only you can see this menu' +
         (coinsToday === null ? '' : ` · game coins today: ${coinsToday}/${DAILY_CAP}`),
         notice ? `-# ${notice}` : null,
         row(
@@ -208,7 +237,7 @@ function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notic
         ),
         separator(),
         ...(entry ? setupView(ownerId, entry, values ?? defaults(entry))
-            : current === 'stats' ? statsView(stats)
+            : current === 'stats' ? statsView(ownerId, stats)
                 : CATALOG.filter(g => g.category === current).map(g => gameSection(ownerId, g))),
     ];
     return { ...panelPayload(container(parts, COLOR)), allowedMentions: { parse: [] } };
@@ -216,7 +245,7 @@ function renderMenu(ownerId, { tab = 'solo', gameId = null, values = null, notic
 
 // The menu with the owner's game coins for today (and their stats, on the Stats tab)
 async function menuView(ownerId, view) {
-    const [coinsToday, stats] = await Promise.all([gameCoinsToday(ownerId), view.tab === 'stats' ? statsFor(ownerId) : new Map()]);
+    const [coinsToday, stats] = await Promise.all([gameCoinsToday(ownerId), view.tab === 'stats' ? statsFor(ownerId) : undefined]);
     return renderMenu(ownerId, { ...view, coinsToday, stats });
 }
 
@@ -225,8 +254,8 @@ async function menuView(ownerId, view) {
 const menus = new Map(); // message ID → timer
 const starting = new Set(); // menus whose game is being started right now
 
-// Whether a live game is on this message (the menu became that game)
-const gameOn = (messageId) => [...games.values()].some(g => g.message?.id === messageId);
+// Whether a game was started from this menu (it became that game, or posted it)
+const gameOn = (messageId) => [...games.values()].some(g => g.menuId === messageId || g.message?.id === messageId);
 
 // `interaction` must be one whose reply is the menu message, so deleteReply() removes the menu
 function keepMenu(messageId, interaction) {
@@ -254,20 +283,26 @@ function setReplay(game, entry, values) {
     game.replay = { type: entry.id, state: encode(entry, values), rematch: entry.category === 'party' };
 }
 
-// Opens a menu for whoever used /games (`game:<id>` opens on that game: its setup if it has
-// choices, otherwise its tab) or pressed Games on a finished game
+// Opens a private menu for whoever used /games (`game:<id>` opens on that game: its setup if it
+// has choices, otherwise its tab) or pressed Games on a finished game
 async function openMenu(interaction) {
     const entry = CATALOG.find(g => g.id === interaction.options?.getString?.('game'));
     const view = entry ? (hasChoices(entry) ? { gameId: entry.id } : { tab: entry.category }) : {};
-    const response = await interaction.reply({ ...await menuView(interaction.user.id, view), withResponse: true });
+    const response = await interaction.reply({
+        ...await menuView(interaction.user.id, view),
+        flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+        withResponse: true,
+    });
     keepMenu(response?.resource?.message?.id, interaction);
 }
 
 /**
- * Play again / Rematch on a finished game: anyone can press it, and the new game (or lobby) gets
- * its own message below. When one of the game's players presses it, the others are invited back,
- * once: a party lobby pings them to press Join (nobody is ever added without choosing to), and a
- * two-player rematch challenges the other player. Anyone else gets a game of their own.
+ * Play again / Rematch on a finished game: anyone can press it. A game for others gets its own
+ * message below; a private game replaces the finished private one (or, pressed on someone else's
+ * public game, comes as a private message). When one of the game's players presses it, the others
+ * are invited back, once: a party lobby pings them to press Join (nobody is ever added without
+ * choosing to), and a two-player rematch challenges the other player. Anyone else gets a game of
+ * their own.
  */
 async function playAgain(interaction, type, finishedId, state = '') {
     const entry = CATALOG.find(g => g.id === type);
@@ -285,12 +320,16 @@ async function playAgain(interaction, type, finishedId, state = '') {
     const values = decode(entry, state);
     if (entry.opponent && values.opponentId !== BOT) values.opponentId = others[0] ?? BOT;
 
-    await interaction.deferReply();
+    const forEveryone = isPublic(entry, values);
+    interaction.gameVisibility = forEveryone ? 'public' : 'private';
+    const inPlace = !forEveryone && interaction.message?.flags?.has?.(MessageFlags.Ephemeral);
+    if (inPlace) await interaction.deferUpdate();
+    else await interaction.deferReply(forEveryone ? {} : { flags: MessageFlags.Ephemeral });
     await GAMES[entry.id].start(interaction, values);
     const game = startedBy(interaction);
     if (!game) {
         // It couldn't start (e.g. no trivia questions right now) and said why; tidy up shortly after
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000).unref?.();
+        if (!inPlace) setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000).unref?.();
         return;
     }
     setReplay(game, entry, values);
@@ -319,23 +358,35 @@ async function handleInteraction(client, interaction) {
         await interaction.deferUpdate();
         return interaction.deleteReply().catch(() => {});
     }
+    // Show in channel: the owner's stats card, posted for everyone
+    if (action === 'share') {
+        await interaction.deferUpdate();
+        const stats = await statsFor(ownerId);
+        if (stats.lines.size) await interaction.followUp(statsCard(interaction.user, stats));
+        await interaction.editReply(await menuView(ownerId, { tab: 'stats', notice: 'Your stats card is posted in the channel.' }));
+        return keepMenu(messageId, interaction);
+    }
     // Play starts a game with no choices in one click; Start starts one after its setup
     if ((action === 'start' || action === 'play') && entry) {
         // A second click (while the first is still starting, e.g. fetching questions) is ignored
         if (starting.has(messageId) || gameOn(messageId)) return interaction.deferUpdate();
         starting.add(messageId);
         const values = decode(entry, action === 'start' ? rest[0] : '');
+        interaction.gameVisibility = isPublic(entry, values) ? 'public' : 'private';
         try {
+            await interaction.deferUpdate(); // starting can take a moment (e.g. fetching questions)
             await GAMES[entry.id].start(interaction, values);
         } finally {
             starting.delete(messageId);
         }
         const game = startedBy(interaction);
-        if (game) setReplay(game, entry, values);
-        // Started: the menu is now the game. Not started: it stays a menu. If this click was answered
-        // with a private notice (its reply isn't the menu), the earlier cleanup timer still applies.
-        if (gameOn(messageId)) forgetMenu(messageId);
-        else if (!interaction.replied) keepMenu(messageId, interaction);
+        if (game) {
+            setReplay(game, entry, values);
+            game.menuId = messageId;
+            forgetMenu(messageId);
+        } else {
+            keepMenu(messageId, interaction); // not started (it said why): the menu stays
+        }
         return;
     }
 
@@ -364,4 +415,4 @@ async function handleInteraction(client, interaction) {
     keepMenu(messageId, interaction);
 }
 
-module.exports = { CATALOG, openMenu, handleInteraction, renderMenu, encode, decode };
+module.exports = { CATALOG, openMenu, handleInteraction, renderMenu, statsCard, encode, decode };
