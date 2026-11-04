@@ -7,7 +7,7 @@ const { startDatabase, stopDatabase, clearDatabase, fakeGuild } = require('./hel
 // shop logic (the off switch itself is tested at the end)
 const economyConfig = require('../src/config/economy');
 economyConfig.CARD_THEMES_ENABLED = true;
-economyConfig.CUSTOM_CARD_COLORS_ENABLED = true; // also off until approved; tested here
+economyConfig.CUSTOM_CARD_COLORS_ENABLED = true;
 
 const Member = require('../src/models/Member');
 const Wallet = require('../src/models/Wallet');

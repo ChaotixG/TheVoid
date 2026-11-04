@@ -25,8 +25,8 @@ module.exports = {
     // Approved from rendered previews. While off, /shop shows "coming soon" and /rank always uses
     // the default look (identical to the card before themes existed).
     CARD_THEMES_ENABLED: true,
-    // Premium custom theme (colors, gradients, background image). Off until rendered previews are approved.
-    CUSTOM_CARD_COLORS_ENABLED: false,
+    // Premium custom theme (colors, gradients, background picture). Approved from rendered previews.
+    CUSTOM_CARD_COLORS_ENABLED: true,
     CUSTOM_THEME: {
         price: 10_000,          // premium members only
         directionPrice: 2_500,  // each gradient direction beyond the free one
