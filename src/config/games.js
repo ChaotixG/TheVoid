@@ -16,13 +16,33 @@ module.exports = {
         minesweeper: { base: 15, speedBonus: 20, fastSeconds: 30, slowSeconds: 180 },
         // A perfect game (8 moves) pays the most; each extra move costs a little
         memory: { perfect: 40, perExtraMove: 2, minimum: 10 },
+
+        // Party games: coins for how well you did, plus a bonus for the winner (shared on a tie)
+        triviaParty: { perCorrect: 3, speedBonus: 2, winnerBonus: 10 }, // speed bonus: full for an instant answer
+        scramble: { perWord: 5, winnerBonus: 10 },
+        wordChain: { perWord: 1, maxWords: 20, winner: 15, perOpponent: 5 },
+        higherLower: { perRound: 2, winner: 15, perOpponent: 3 },
+        crazyEights: { winner: 20, perOpponent: 8, runnerUp: 8 },
+        liarsDice: { winner: 20, perOpponent: 8, runnerUp: 8 },
     },
 
     IDLE_MINUTES: 10,       // a game ends after this long without a move
     CHALLENGE_SECONDS: 60,  // time to accept a challenge
     TRIVIA_SECONDS: 20,     // time to answer a trivia question
+    MENU_MINUTES: 5,        // an unused /games menu is removed after this long
+    LOBBY_SECONDS: 180,     // a party lobby starts by itself after this (or closes, if too few joined)
 
     MINESWEEPER: { size: 5, mines: 4 },
     WORDLE: { guesses: 6 },
     HANGMAN: { lives: 6 },
+
+    // Party games (2+ players, joined from a lobby)
+    PARTY: {
+        triviaParty: { minPlayers: 2, maxPlayers: 20, questions: 10, answerSeconds: 15, revealSeconds: 6 },
+        crazyEights: { minPlayers: 2, maxPlayers: 8, handSize: 7, turnSeconds: 60 },
+        liarsDice: { minPlayers: 2, maxPlayers: 6, dice: 5, turnSeconds: 60, revealSeconds: 5 },
+        wordChain: { minPlayers: 2, maxPlayers: 12, turnSeconds: 30, minTurnSeconds: 10, minLength: 3 },
+        scramble: { minPlayers: 2, maxPlayers: 20, rounds: 10, roundSeconds: 30, pauseSeconds: 3 },
+        higherLower: { minPlayers: 2, maxPlayers: 20, guessSeconds: 15, maxRounds: 15 },
+    },
 };

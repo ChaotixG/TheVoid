@@ -41,4 +41,10 @@ function connect4Reward(winnerMoves, vsBot) {
     return r.base + Math.round(r.quickBonus * clamp01((21 - winnerMoves) / 17));
 }
 
-module.exports = { triviaReward, wordleReward, hangmanReward, minesweeperReward, memoryReward, connect4Reward };
+// Party games: the winner's coins grow with the number of people they beat
+function winnerReward(gameType, players) {
+    const r = REWARDS[gameType];
+    return r.winner + r.perOpponent * Math.max(0, players - 1);
+}
+
+module.exports = { triviaReward, wordleReward, hangmanReward, minesweeperReward, memoryReward, connect4Reward, winnerReward };

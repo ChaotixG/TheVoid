@@ -1,5 +1,5 @@
 // Routes every interaction. Components and modals use namespaced custom IDs ("settings:...",
-// "vc:...", "ticket:...", "lb:...", "shop:...", "game:..."), so each feature only ever sees its own interactions and
+// "vc:...", "ticket:...", "lb:...", "shop:...", "game:...", "games:..."), so each feature only ever sees its own interactions and
 // everything keeps working after a restart (no in-memory collectors needed).
 const commandHandler = require('../../handlers/commandHandler');
 const settings = require('../../features/settings/handler');
@@ -8,6 +8,7 @@ const tickets = require('../../features/tickets/handler');
 const leaderboard = require('../../features/leveling/leaderboard');
 const shop = require('../../features/economy/shop');
 const games = require('../../features/games');
+const gamesMenu = require('../../features/games/menu');
 const { replyError } = require('../../utils/interactionReplies');
 const { error } = require('../../services/logger');
 
@@ -18,6 +19,7 @@ const ROUTES = {
     lb: leaderboard.handleInteraction,
     shop: shop.handleInteraction,
     game: games.handleInteraction,
+    games: gamesMenu.handleInteraction,
 };
 
 // IDs from before custom IDs were namespaced; they're still on existing ticket messages

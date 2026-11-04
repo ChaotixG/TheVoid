@@ -1,8 +1,9 @@
 // Shared pieces for game panels: board updates, player checks and two-player challenges.
+// Games are started from the /games menu (features/games/menu.js), which becomes the game message.
 const { CHALLENGE_SECONDS } = require('../../config/games');
 const { container, row, button, panelPayload, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
-const { endGame, runExclusive, touch } = require('./sessions');
+const { endGame, runExclusive, touch, editGame } = require('./sessions');
 
 const BOT = 'bot'; // stands in for the bot as an opponent
 
@@ -10,6 +11,12 @@ const gamePayload = (parts, color, mentions = []) => ({
     ...panelPayload(container(parts, color)),
     allowedMentions: { users: mentions },
 });
+
+// Shows a new game in place of the /games menu it was started from (or as a reply to a command)
+function showGame(interaction, payload) {
+    if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
+    return interaction.isMessageComponent?.() ? interaction.update(payload) : interaction.reply(payload);
+}
 
 // Edit the game message from a click on it, and remember that interaction for later edits
 async function updateBoard(game, interaction, payload) {
@@ -30,7 +37,7 @@ function notify(interaction, content) {
 // Refuses clicks from people who aren't playing; returns true when refused
 async function refuseOutsider(game, interaction) {
     if (game.players.includes(interaction.user.id)) return false;
-    await interaction.reply(ephemeral('This isn\'t your game. Start your own with its command!'));
+    await interaction.reply(ephemeral('This isn\'t your game. Start your own with **/games**!'));
     return true;
 }
 
@@ -46,6 +53,16 @@ function challengePayload(game, title) {
             button(`game:${game.id}:decline`, 'Decline', ButtonStyle.Danger),
         ),
     ], 0x5865F2, [opponent]);
+}
+
+// The challenge replaces the /games menu by editing it, and edits don't notify anyone, so the
+// opponent gets a separate ping
+function pingOpponent(interaction, game, title) {
+    const [challenger, opponent] = game.players;
+    return interaction.followUp({
+        content: `<@${opponent}>, <@${challenger}> challenged you to **${title}**! Accept it above.`,
+        allowedMentions: { users: [opponent] },
+    }).catch(() => {});
 }
 
 // Expire unanswered challenges
@@ -91,19 +108,7 @@ async function handleChallenge(game, interaction, action, { title, onAccept, ren
     return true;
 }
 
-/**
- * Who to play against, from a command's `opponent` option: null (or me) = the bot.
- * Returns { opponentId } or { error }.
- */
-function resolveOpponent(interaction) {
-    const opponent = interaction.options.getUser('opponent');
-    if (!opponent || opponent.id === interaction.client.user.id) return { opponentId: BOT };
-    if (opponent.id === interaction.user.id) return { error: 'You can\'t challenge yourself. Leave the opponent empty to play against me!' };
-    if (opponent.bot) return { error: 'Other bots can\'t play. Leave the opponent empty to play against me!' };
-    return { opponentId: opponent.id };
-}
-
 module.exports = {
-    BOT, gamePayload, updateBoard, mention, notify, refuseOutsider,
-    challengePayload, armChallengeTimer, handleChallenge, resolveOpponent,
+    BOT, gamePayload, showGame, updateBoard, editGame, mention, notify, refuseOutsider,
+    challengePayload, pingOpponent, armChallengeTimer, handleChallenge,
 };

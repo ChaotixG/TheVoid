@@ -8,7 +8,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, runExclusive, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
-const { gamePayload, updateBoard, notify } = require('./common');
+const { gamePayload, showGame, updateBoard, notify } = require('./common');
 const { warn } = require('../../services/logger');
 
 const TITLE = '🧠 Trivia';
@@ -130,7 +130,7 @@ async function handle(game, interaction, action, arg) {
     if (action === 'answer') {
         // Answer clicks arrive already acknowledged (see games/index.js), so notices are follow-ups
         if (game.state !== 'asking') return notify(interaction, 'This question is over.');
-        if (game.mode === 'solo' && !isStarter) return notify(interaction, 'This is someone else\'s trivia. Start your own with **/trivia**!');
+        if (game.mode === 'solo' && !isStarter) return notify(interaction, 'This is someone else\'s trivia. Start your own with **/games**!');
         if (game.lockedOut.has(userId)) return notify(interaction, 'You already answered this one.');
 
         const answer = game.question.answers[Number(arg)];
@@ -173,13 +173,12 @@ async function handle(game, interaction, action, arg) {
     return interaction.deferUpdate();
 }
 
-async function start(interaction) {
-    const mode = interaction.options.getString('mode') ?? 'solo';
-    const difficulty = interaction.options.getString('difficulty') ?? 'any';
-    await interaction.deferReply();
-
+/** Starts trivia from the /games menu: solo or a race, at a difficulty */
+async function start(interaction, { mode = 'solo', difficulty = 'any' } = {}) {
+    // Fetching questions can take a moment; the menu stays put if none can be had
+    await (interaction.isMessageComponent?.() ? interaction.deferUpdate() : interaction.deferReply());
     const question = await nextQuestion(difficulty);
-    if (!question) return interaction.editReply('Trivia questions are unavailable right now. Try again in a minute.');
+    if (!question) return notify(interaction, 'Trivia questions are unavailable right now. Try again in a minute.');
 
     const game = createGame('trivia', {
         guildId: interaction.guildId,
@@ -197,8 +196,11 @@ async function start(interaction) {
         return render(game);
     };
     ask(game, question);
-    await interaction.editReply({ ...render(game), content: null, embeds: [] });
+    await showGame(interaction, render(game));
     touch(game, interaction);
 }
 
-module.exports = { start, handle, render, decodeQuestion, nextQuestion, pools, DIFFICULTIES };
+// Races can have many people answering at once (see index.js)
+const deferActions = new Set(['answer']);
+
+module.exports = { start, handle, render, deferActions, decodeQuestion, nextQuestion, pools, DIFFICULTIES };

@@ -139,9 +139,9 @@ test('game rewards stop at the daily cap, even with many wins at once', async ()
 
 // ─── Full flows through the router ────────────────────────────
 test('tic-tac-toe challenge: only the opponent accepts, turns are enforced, the winner gets coins', async () => {
-    const start = fake({ userId: 'p1', options: { opponent: { id: 'p2', bot: false } } });
-    await tictactoe.start(start.i);
-    assert.match(text(start.calls.replies[0]), /challenges you/);
+    const start = fake({ userId: 'p1' });
+    await tictactoe.start(start.i, { opponentId: 'p2' });
+    assert.match(text(start.calls.shown[0]), /challenges you/, 'the menu becomes the challenge');
     const game = onlyGame();
 
     assert.match((await click(game, 'p3', 'accept')).replies[0].content, /isn't for you/);
@@ -162,8 +162,8 @@ test('tic-tac-toe challenge: only the opponent accepts, turns are enforced, the 
 });
 
 test('two players clicking the same square at once: only one move counts', async () => {
-    const start = fake({ userId: 'p1', options: { opponent: { id: 'p2', bot: false } } });
-    await tictactoe.start(start.i);
+    const start = fake({ userId: 'p1' });
+    await tictactoe.start(start.i, { opponentId: 'p2' });
     const game = onlyGame();
     await click(game, 'p2', 'accept');
     const current = game.players[game.turn];
@@ -173,8 +173,8 @@ test('two players clicking the same square at once: only one move counts', async
 });
 
 test('declining a challenge ends it', async () => {
-    const start = fake({ userId: 'p1', options: { opponent: { id: 'p2', bot: false } } });
-    await connect4.start(start.i);
+    const start = fake({ userId: 'p1' });
+    await connect4.start(start.i, { opponentId: 'p2' });
     const game = onlyGame();
     const result = await click(game, 'p2', 'decline');
     assert.match(text(result.shown[0]), /declined/);
@@ -211,8 +211,8 @@ test('trivia: solo pays a correct answer; race locks out wrong answers; unanswer
         await click(game, 'p1', 'stop');
         games.clear();
 
-        const race = fake({ userId: 'p1', options: { mode: 'race' } });
-        await trivia.start(race.i);
+        const race = fake({ userId: 'p1' });
+        await trivia.start(race.i, { mode: 'race' });
         game = onlyGame();
         const wrong = game.question.answers.findIndex(a => a !== 'Right');
         assert.match((await click(game, 'p2', 'answer', wrong)).replies[0].content, /out for this question/);

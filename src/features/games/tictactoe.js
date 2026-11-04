@@ -4,7 +4,7 @@ const { row, button, ButtonStyle } = require('../../utils/panels');
 const { ephemeral } = require('../../utils/interactionReplies');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
-const { BOT, gamePayload, updateBoard, mention, refuseOutsider, challengePayload, armChallengeTimer, handleChallenge, resolveOpponent } = require('./common');
+const { BOT, gamePayload, updateBoard, mention, refuseOutsider, challengePayload, pingOpponent, armChallengeTimer, handleChallenge, showGame } = require('./common');
 
 const TITLE = '❌⭕ Tic-tac-toe';
 const MARKS = ['X', 'O'];
@@ -126,10 +126,8 @@ async function handle(game, interaction, action, arg) {
     await updateBoard(game, interaction, render(game));
 }
 
-async function start(interaction) {
-    const { opponentId, error } = resolveOpponent(interaction);
-    if (error) return interaction.reply(ephemeral(error));
-
+/** Starts a game; `opponentId` (checked by the /games menu) defaults to me */
+async function start(interaction, { opponentId = BOT } = {}) {
     const vsBot = opponentId === BOT;
     const game = createGame('tictactoe', {
         guildId: interaction.guildId,
@@ -140,8 +138,9 @@ async function start(interaction) {
 
     if (vsBot) setup(game);
     else armChallengeTimer(game, TITLE);
-    await interaction.reply(vsBot ? render(game) : challengePayload(game, TITLE));
+    await showGame(interaction, vsBot ? render(game) : challengePayload(game, TITLE));
     touch(game, interaction);
+    if (!vsBot) await pingOpponent(interaction, game, TITLE);
 }
 
 module.exports = { start, handle, render, winnerOf, botMove };

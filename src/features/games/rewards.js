@@ -38,4 +38,10 @@ function rewardText({ paid, capped }) {
     return capped ? 'no coins: daily game limit reached' : '';
 }
 
-module.exports = { payGameReward, rewardText };
+/** Pays several players at once (party games). Returns a Map of userId → reward text. */
+async function payEach(awards, { guildId = null, game } = {}) {
+    const paid = await Promise.all(awards.map(({ userId, amount }) => payGameReward(userId, amount, { guildId, game })));
+    return new Map(awards.map(({ userId }, i) => [userId, rewardText(paid[i])]));
+}
+
+module.exports = { payGameReward, rewardText, payEach };

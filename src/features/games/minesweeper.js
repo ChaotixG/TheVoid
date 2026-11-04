@@ -5,7 +5,7 @@ const { minesweeperReward } = require('./scoring');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
-const { gamePayload, updateBoard, refuseOutsider } = require('./common');
+const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 
 const TITLE = '💣 Minesweeper';
 const { size: SIZE, mines: MINES } = MINESWEEPER;
@@ -142,7 +142,7 @@ async function start(interaction) {
         state: 'playing',
     });
     game.onExpire = () => { game.expired = true; game.mines ??= placeMines(-1); return render(game); };
-    await interaction.reply(render(game));
+    await showGame(interaction, render(game));
     touch(game, interaction);
 }
 

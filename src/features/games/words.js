@@ -1,5 +1,5 @@
-// Word lists for Wordle and Hangman. Answers are hand-picked common words (a test checks every
-// one is in the dictionary); guesses are checked against the full dictionary from `word-list`.
+// Word lists for Wordle, Hangman and Scramble. Answers are hand-picked common words (a test checks
+// every one is in the dictionary); guesses are checked against the full dictionary from `word-list`.
 const fs = require('fs');
 const { randomInt } = require('crypto');
 
@@ -44,6 +44,19 @@ squirrel stadium strawberry submarine sunflower telescope thunder tornado treasu
 vampire volcano waterfall whistle wizard zombie
 `.trim().split(/\s+/);
 
+// Scramble: everyday words of 5 to 8 letters that are fair to unscramble against the clock
+const SCRAMBLE_WORDS = `
+apple beach bread chair cloud dance dream earth field flame fruit ghost grape heart horse house juice knife lemon light
+magic money mouse music night ocean paint party piano pizza plant queen river robot salad sheep smile snake space spoon
+storm sugar table tiger toast tower train water whale zebra animal basket bridge button camera candle carpet castle
+cheese cookie dragon flower forest garden guitar hammer island jacket jungle kitten ladder lizard magnet marble monkey
+orange parrot pencil pepper pillow planet pocket potato rabbit rocket shadow silver spider summer tomato turtle wallet
+window winter wizard yellow balloon blanket cabbage captain chicken compass crystal diamond dolphin freedom giraffe
+holiday kitchen lantern library monster morning octopus pancake penguin popcorn pumpkin rainbow teacher thunder tornado
+unicorn volcano weather whistle alphabet backpack birthday building calendar campfire dinosaur elephant envelope
+football hospital keyboard mountain notebook sandwich sunshine treasure umbrella vacation
+`.trim().split(/\s+/);
+
 let dictionary = null; // Set of 5-letter words, loaded on first use
 function fiveLetterWords() {
     if (!dictionary) {
@@ -54,13 +67,25 @@ function fiveLetterWords() {
     return dictionary;
 }
 
+let allWords = null; // Set of every dictionary word, loaded on first use (Word Chain, Scramble)
+/** Whether a lowercase word is in the dictionary */
+function isWord(word) {
+    if (!allWords) {
+        const wordListPath = require('word-list').default ?? require('word-list');
+        allWords = new Set(fs.readFileSync(wordListPath, 'utf8').split('\n').filter(Boolean));
+    }
+    return allWords.has(word);
+}
+
 const isValidGuess = (word) => fiveLetterWords().has(word);
 const pick = (list) => list[randomInt(list.length)];
 
 module.exports = {
     WORDLE_ANSWERS,
     HANGMAN_WORDS,
+    SCRAMBLE_WORDS,
     isValidGuess,
+    isWord,
     fiveLetterWords,
     randomWordleAnswer: () => pick(WORDLE_ANSWERS),
     randomHangmanWord: () => pick(HANGMAN_WORDS),

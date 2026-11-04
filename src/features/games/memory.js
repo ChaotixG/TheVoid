@@ -4,7 +4,7 @@ const { memoryReward } = require('./scoring');
 const { row, button, ButtonStyle } = require('../../utils/panels');
 const { createGame, endGame, touch } = require('./sessions');
 const { payGameReward, rewardText } = require('./rewards');
-const { gamePayload, updateBoard, refuseOutsider } = require('./common');
+const { gamePayload, updateBoard, refuseOutsider, showGame } = require('./common');
 
 const TITLE = '🃏 Memory';
 const FACES = ['🍎', '🍌', '🍇', '🍒', '🍉', '🍋', '🥝', '🍑'];
@@ -95,7 +95,7 @@ async function start(interaction) {
         state: 'playing',
     });
     game.onExpire = () => { game.expired = true; return render(game); };
-    await interaction.reply(render(game));
+    await showGame(interaction, render(game));
     touch(game, interaction);
 }
 
